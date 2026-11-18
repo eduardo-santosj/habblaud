@@ -69,12 +69,10 @@ function detect(): Locale {
       const saved = normalizeLocale(g.localStorage?.getItem(LOCALE_STORAGE_KEY));
       if (saved) return saved;
     } catch {
-      // localStorage bloqueado (modo privado, iframe): segue para os idiomas do navegador.
+      // localStorage bloqueado (modo privado, iframe): fica no padrão.
     }
-    for (const l of g.navigator?.languages ?? [g.navigator?.language ?? '']) {
-      const n = normalizeLocale(l);
-      if (n) return n;
-    }
+    // Fork Vela: sem escolha salva, abre em português, mesmo com o navegador em inglês
+    // (Configurações > Idioma continua trocando).
     return 'pt-BR';
   }
   const env = g.process?.env ?? {};
