@@ -43,6 +43,9 @@
     "codex:status": "tsx scripts/codex-install.ts status",
     "codex:bridge": "tsx scripts/codex-bridge.ts",
     "maestri:roles": "node scripts/maestri-roles.mjs --scan",
+    "infra:status": "tsx scripts/infra-collect.ts --status",
+    "infra:custo": "tsx scripts/infra-collect.ts --custo",
+    "infra:daemon": "tsx scripts/infra-collect.ts --daemon",
     "remote:setup": "tsx scripts/remote-setup.ts",
     "remote:mdns": "tsx scripts/remote-mdns.ts",
     "release": "tsx scripts/release.ts"

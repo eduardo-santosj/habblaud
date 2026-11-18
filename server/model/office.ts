@@ -294,6 +294,17 @@ export class Office {
     return [...this.agents.values()].map((r) => r.info);
   }
 
+  /** Salas fixas: existem mesmo vazias (ex.: a sala de Infra, que mostra a saúde dos sistemas). */
+  private pinned = new Set<string>();
+
+  /** Fixa uma sala: cria agora e nunca apaga por estar vazia. */
+  pinRoom(roomId: string): void {
+    const id = normalizeCwd(roomId);
+    this.pinned.add(id);
+    this.ensureRoom(id, this.now());
+    this.markDirty();
+  }
+
   /** Pasta real da sessão do agente (para terminal e Novo agente); cai na pasta da sala se não houver. */
   agentCwd(id: string): string | undefined {
     const r = this.agents.get(id);
@@ -948,7 +959,7 @@ export class Office {
     if (this.effects.prune(now)) this.markDirty();
     if (removed) {
       const occupied = new Set([...this.agents.values()].map((r) => r.info.roomId));
-      for (const id of [...this.rooms.keys()]) if (!occupied.has(id)) this.rooms.delete(id);
+      for (const id of [...this.rooms.keys()]) if (!occupied.has(id) && !this.pinned.has(id)) this.rooms.delete(id);
       this.recomputeRoomNames();
       this.markDirty();
     }

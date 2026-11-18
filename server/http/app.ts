@@ -79,6 +79,8 @@ export interface ApiDeps {
   renameRoom?: (id: string, name: string) => string | undefined;
   /** Estatísticas do "Meu dia" (GET /api/stats, http/stats.ts). */
   stats?: DayStatsService;
+  /** Sala de Infra (fork Vela): status das máquinas e dos sistemas, custo e alertas (GET /api/infra, só local). */
+  infra?: () => unknown;
   /** Verificação de versão nova no GitHub (GET /api/updates, POST /api/updates/check; updates/checker.ts). */
   updates?: {
     status(): UpdateStatus;
@@ -681,6 +683,14 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
     }
     if (path === '/api/stats' || path.startsWith('/api/stats/')) {
       handleStatsRoute(req, res, url, deps.stats, sendJson);
+      return true;
+    }
+    if (path === '/api/infra') {
+      // Custo e infraestrutura: só pelo próprio computador, nunca pelo acesso remoto.
+      if (method !== 'GET') methodNotAllowed(res, 'GET');
+      else if (isRemote(req)) sendJson(res, 403, { error: tr('não liberado no acesso remoto') });
+      else if (!deps.infra) sendJson(res, 404, { error: tr('sala de infra desligada') });
+      else sendJson(res, 200, deps.infra());
       return true;
     }
     if (path === '/api/demo') {

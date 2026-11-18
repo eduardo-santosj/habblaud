@@ -58,7 +58,8 @@ import { OwnerSocial } from './world/social';
 import { BuildingTokens } from './world/tokens';
 import { BuildingUplink } from './world/uplink';
 import { WorldViewer } from './world/viewer';
-import { MaestriRoles, parsePathRooms, placeByArea } from './maestri';
+import { areaRoomId, MaestriRoles, parsePathRooms, placeByArea } from './maestri';
+import { InfraService } from './infra';
 
 const config = loadConfig();
 const startedAt = Date.now();
@@ -116,6 +117,9 @@ const accounts = new AccountsService({
 });
 const maestriRoles = new MaestriRoles(config.usageDir);
 const pathRooms = parsePathRooms(process.env.HABBLAUD_PATH_ROOMS);
+// HABBLAUD_ROOMS=areas: salas por área (Coordenação, Front, Back, UI, QA...) em vez de uma sala por projeto.
+const modoAreas = process.env.HABBLAUD_ROOMS?.trim().toLowerCase() === 'areas';
+const infra = new InfraService(config.usageDir);
 const office = new Office({
   names,
   roomAlias: (path) => roomAliases.get(path),
@@ -134,8 +138,10 @@ const office = new Office({
   world: () => world?.meta() ?? { enabled: false, configured: false, state: 'off' },
   maestriRole: (roleId) => maestriRoles.name(roleId),
   // HABBLAUD_ROOMS=areas: salas por área (Coordenação, Front, Back, UI, QA...) em vez de uma sala por projeto.
-  placeByArea: process.env.HABBLAUD_ROOMS?.trim().toLowerCase() === 'areas' ? (cwd) => placeByArea(cwd, maestriRoles, pathRooms) : undefined,
+  placeByArea: modoAreas ? (cwd) => placeByArea(cwd, maestriRoles, pathRooms) : undefined,
 });
+// Modo por área: a sala de Infra existe sempre (mostra a saúde dos sistemas mesmo sem nenhum agente nela).
+if (modoAreas) office.pinRoom(areaRoomId('Infra'));
 // Fontes de agentes, uma por ferramenta (sources/source.ts): a do Claude Code e, depois dela, a do Codex (quando há
 // pastas do Codex; HABBLAUD_CODEX=0 desliga), com o histórico dela no HistorySet abaixo e as contas registradas por
 // ela mesma (accounts.setProviderAccounts). `codex` também recebe os eventos dos hooks do Codex (CodexLive).
@@ -374,11 +380,13 @@ const api = createApiHandler({
     const snap = hub.current();
     const last = new Map<string, number>();
     for (const a of snap.agents) last.set(a.roomId, Math.max(last.get(a.roomId) ?? 0, a.lastEventAt ?? 0));
-    const rooms = snap.rooms.filter((r) => !isDemoId(r.id)).map((r) => ({ path: r.path, lastAt: last.get(r.id) ?? 0 }));
+    // Salas por área (/areas/...) não são pastas: ficam fora da lista de pastas recentes.
+    const rooms = snap.rooms.filter((r) => !isDemoId(r.id) && !r.path.startsWith('/areas/')).map((r) => ({ path: r.path, lastAt: last.get(r.id) ?? 0 }));
     return recentFolders(history ? await history.list().catch(() => []) : [], rooms);
   },
   codexLive,
   stats,
+  infra: modoAreas ? () => infra.snapshot() : undefined,
   updates,
   remote: config.remote ? { is: isRemoteRequest, allows: (f) => config.remote!.allow.has(f) } : undefined,
   world: world ? createWorldRoutes(world, worldViewer, worldSocial) : undefined,
