@@ -31,6 +31,7 @@ import { hash32 } from '../../shared/hash';
 import { applyPermission } from '../permissions/registry';
 import type { NameStore, StoredCharacter } from './names';
 import { normalizeCwd, roomDisplayNames, SlotAllocator } from './rooms';
+import { parseMaestriRoleCwd } from '../maestri';
 import { tr } from '../../shared/i18n';
 import type { WorldMeta } from '../../shared/world/api';
 
@@ -80,6 +81,8 @@ export interface OfficeDeps {
   ptys?: () => { status: PtyStatus; list: PtyInfo[] };
   /** Habblaud World (WorldService.meta; ver OfficeSnapshot.meta.world). */
   world?: () => WorldMeta;
+  /** Nome do papel de um recruta do Maestri pelo uuid (server/maestri.ts). */
+  maestriRole?: (roleId: string) => string | undefined;
   now?: () => number;
 }
 
@@ -322,12 +325,15 @@ export class Office {
       this.setStatus(p.id, p.status, p.waitingFor);
       return;
     }
-    const roomId = normalizeCwd(p.cwd);
+    // Recruta do Maestri: senta na sala do projeto que o recrutou, com o nome do papel (não o uuid da pasta).
+    const maestri = parseMaestriRoleCwd(p.cwd);
+    const roomId = normalizeCwd(maestri ? maestri.projectPath : p.cwd);
     this.ensureRoom(roomId, now);
-    const chosen = this.roomCharacter(roomId, p.id, p.sessionId);
+    const chosen = maestri ? undefined : this.roomCharacter(roomId, p.id, p.sessionId);
+    const roleName = maestri ? this.deps.maestriRole?.(maestri.roleId) ?? `Maestri ${maestri.roleId.slice(0, 8)}` : undefined;
     // A mesma sessão retomada noutro processo (ex.: "Assumir aqui") mantém o nome, mesmo com o processo antigo
     // ainda saindo do escritório.
-    const person = chosen ?? this.deps.names.assign(p.sessionId, this.takenNames(undefined, p.sessionId));
+    const person = chosen ?? (roleName ? { name: roleName, look: hash32(maestri!.roleId) % 2 ? ('m' as const) : ('f' as const) } : this.deps.names.assign(p.sessionId, this.takenNames(undefined, p.sessionId)));
     const info: AgentInfo = {
       id: p.id,
       kind: 'main',
