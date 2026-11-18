@@ -39,6 +39,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { discoverClaudeDirs, expandHome, isDefaultDir } from '../server/accounts/detect';
+import { runnableClaudeBin } from '../server/claude-bin';
 import { LEGACY_NAME } from '../server/legacy';
 import { DEFAULT_PORT, installedHook, planUninstall as planHookUninstall } from './hooks-install';
 import {
@@ -95,8 +96,11 @@ export interface ClaudeResult {
 /** Roda `claude <args>` com o ambiente dado (o CLAUDE_CONFIG_DIR da conta vem nele). */
 export type ClaudeRunner = (args: string[], env: NodeJS.ProcessEnv) => ClaudeResult;
 
-/** O runner de verdade. stdin fechado: nada fica esperando uma resposta no terminal. */
-export function makeClaudeRunner(cmd = 'claude'): ClaudeRunner {
+/**
+ * O runner de verdade. stdin fechado: nada fica esperando uma resposta no terminal.
+ * Sem `cmd`, usa o `claude` do PATH já resolvido (no Windows, o claude.exe por trás do atalho claude.cmd).
+ */
+export function makeClaudeRunner(cmd = runnableClaudeBin() ?? 'claude'): ClaudeRunner {
   return (args, env) => {
     const r = spawnSync(cmd, args, { env, encoding: 'utf8', timeout: CLI_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.error) {
