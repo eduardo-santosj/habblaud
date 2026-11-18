@@ -29,6 +29,10 @@ services:
     environment:
       HABBLAUD_ALLOWED_HOSTS: ${HABBLAUD_ALLOWED_HOSTS:-}
       HABBLAUD_DEMO: ${HABBLAUD_DEMO:-}
+      # areas = salas por área (Coordenação, Front, Back, UI, QA...) em vez de uma por projeto (fork Vela).
+      HABBLAUD_ROOMS: ${HABBLAUD_ROOMS:-}
+      # "trecho/de/pasta=Sala;..." : sessões diretas nessas pastas ganham sala própria (só com HABBLAUD_ROOMS=areas).
+      HABBLAUD_PATH_ROOMS: ${HABBLAUD_PATH_ROOMS:-}
       # O mesmo valor da porta publicada acima: o terminal (e o que age sobre as sessões) só liga com bind local.
       HABBLAUD_BIND: ${HABBLAUD_BIND:-127.0.0.1}
       HABBLAUD_TERMINAL: ${HABBLAUD_TERMINAL:-}

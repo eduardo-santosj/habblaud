@@ -83,6 +83,8 @@ export interface OfficeDeps {
   world?: () => WorldMeta;
   /** Nome do papel de um recruta do Maestri pelo uuid (server/maestri.ts). */
   maestriRole?: (roleId: string) => string | undefined;
+  /** Modo salas por área (fork Vela): decide sala e, para recrutas, o nome. Ausente = uma sala por projeto. */
+  placeByArea?: (cwd: string) => { roomId: string; name?: string };
   now?: () => number;
 }
 
@@ -124,6 +126,8 @@ export interface SubInput {
 
 interface AgentRecord {
   info: AgentInfo;
+  /** Pasta real da sessão (no modo por área, a sala não é uma pasta). */
+  cwd?: string;
   history: Activity[];
   removeAt?: number;
   /** Início do turno atual (para "Concluiu em X"). */
@@ -290,6 +294,12 @@ export class Office {
     return [...this.agents.values()].map((r) => r.info);
   }
 
+  /** Pasta real da sessão do agente (para terminal e Novo agente); cai na pasta da sala se não houver. */
+  agentCwd(id: string): string | undefined {
+    const r = this.agents.get(id);
+    return r?.cwd ?? (r ? this.roomPath(r.info.roomId) : undefined);
+  }
+
   /** Pasta do projeto da sala (cwd original, sem normalizar). */
   roomPath(roomId: string): string | undefined {
     return this.rooms.get(roomId)?.path;
@@ -326,11 +336,13 @@ export class Office {
       return;
     }
     // Recruta do Maestri: senta na sala do projeto que o recrutou, com o nome do papel (não o uuid da pasta).
+    // No modo por área (fork Vela), placeByArea decide a sala de todos e o nome dos recrutas.
     const maestri = parseMaestriRoleCwd(p.cwd);
-    const roomId = normalizeCwd(maestri ? maestri.projectPath : p.cwd);
+    const placed = this.deps.placeByArea?.(p.cwd);
+    const roomId = normalizeCwd(placed ? placed.roomId : maestri ? maestri.projectPath : p.cwd);
     this.ensureRoom(roomId, now);
     const chosen = maestri ? undefined : this.roomCharacter(roomId, p.id, p.sessionId);
-    const roleName = maestri ? this.deps.maestriRole?.(maestri.roleId) ?? `Maestri ${maestri.roleId.slice(0, 8)}` : undefined;
+    const roleName = maestri ? placed?.name ?? this.deps.maestriRole?.(maestri.roleId) ?? `Maestri ${maestri.roleId.slice(0, 8)}` : undefined;
     // A mesma sessão retomada noutro processo (ex.: "Assumir aqui") mantém o nome, mesmo com o processo antigo
     // ainda saindo do escritório.
     const person = chosen ?? (roleName ? { name: roleName, look: hash32(maestri!.roleId) % 2 ? ('m' as const) : ('f' as const) } : this.deps.names.assign(p.sessionId, this.takenNames(undefined, p.sessionId)));
@@ -358,7 +370,7 @@ export class Office {
       if (chosen.parts) info.parts = { ...chosen.parts };
     }
     if (p.status === 'waiting') info.waitingFor = p.waitingFor ?? tr('responder no terminal');
-    const rec: AgentRecord = { info, history: [] };
+    const rec: AgentRecord = { info, cwd: p.cwd, history: [] };
     if (p.status === 'working') rec.turnStart = now;
     this.agents.set(p.id, rec);
     const acc = this.deps.accountName(p.account);

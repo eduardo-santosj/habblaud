@@ -58,7 +58,7 @@ import { OwnerSocial } from './world/social';
 import { BuildingTokens } from './world/tokens';
 import { BuildingUplink } from './world/uplink';
 import { WorldViewer } from './world/viewer';
-import { MaestriRoles } from './maestri';
+import { MaestriRoles, parsePathRooms, placeByArea } from './maestri';
 
 const config = loadConfig();
 const startedAt = Date.now();
@@ -115,6 +115,7 @@ const accounts = new AccountsService({
   onChange: () => late.office?.markDirty(),
 });
 const maestriRoles = new MaestriRoles(config.usageDir);
+const pathRooms = parsePathRooms(process.env.HABBLAUD_PATH_ROOMS);
 const office = new Office({
   names,
   roomAlias: (path) => roomAliases.get(path),
@@ -132,6 +133,8 @@ const office = new Office({
   updates: () => updates.status(),
   world: () => world?.meta() ?? { enabled: false, configured: false, state: 'off' },
   maestriRole: (roleId) => maestriRoles.name(roleId),
+  // HABBLAUD_ROOMS=areas: salas por área (Coordenação, Front, Back, UI, QA...) em vez de uma sala por projeto.
+  placeByArea: process.env.HABBLAUD_ROOMS?.trim().toLowerCase() === 'areas' ? (cwd) => placeByArea(cwd, maestriRoles, pathRooms) : undefined,
 });
 // Fontes de agentes, uma por ferramenta (sources/source.ts): a do Claude Code e, depois dela, a do Codex (quando há
 // pastas do Codex; HABBLAUD_CODEX=0 desliga), com o histórico dela no HistorySet abaixo e as contas registradas por
@@ -310,7 +313,7 @@ const ptys = spawnPty
       accounts: () => accounts.entries().map((a) => ({ id: a.id, dir: a.dir, isDefault: isDefaultDir(a.dir, config.home) })),
       agent: (id) => {
         const a = office.get(id);
-        return a && { id: a.id, kind: a.kind, account: a.account, sessionId: a.sessionId, cwd: office.roomPath(a.roomId) };
+        return a && { id: a.id, kind: a.kind, account: a.account, sessionId: a.sessionId, cwd: office.agentCwd(a.id) };
       },
       onChange: () => office.markDirty(),
       createScreen: ptyScreen,
