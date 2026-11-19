@@ -87,9 +87,12 @@ describe('docker-up', () => {
     expect(yml).toContain('HABBLAUD_USAGE_DIR: "/usage"');
     expect(yml).toContain('source: "/Users/fulano/.habblaud/usage"\n        target: "/usage"\n        read_only: true');
     const binds = yml.split('- type: bind').length - 1;
-    expect(binds).toBe(3);
+    // 2 da conta + /usage (somente leitura) + a pauta da sala de Marketing (a única gravável).
+    expect(binds).toBe(4);
     expect(yml.match(/read_only: true/g)).toHaveLength(3);
-    expect(yml.match(/create_host_path: false/g)).toHaveLength(3);
+    expect(yml.match(/read_only: false/g)).toHaveLength(1);
+    expect(yml).toContain('target: "/usage/marketing/pauta"\n        read_only: false');
+    expect(yml.match(/create_host_path: false/g)).toHaveLength(4);
     // Payload das contas: sem cache vazio, sem campos que não existem.
     expect(accountsPayload(mounts)).toEqual([{ id: '.claude', configDir: '/Users/fulano/.claude', mountDir: '/claude/.claude', short: 'C', name: 'Conta C', color: '#000000', email: 'a@b.c' }]);
     // Sem a pasta do statusline: nada de /usage.

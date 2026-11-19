@@ -147,6 +147,8 @@ export interface BindMount {
   source: string;
   /** Caminho dentro do container. */
   target: string;
+  /** Gravável (padrão: somente leitura). Só a pasta da pauta da sala de Marketing (fork Vela) usa. */
+  gravavel?: boolean;
 }
 
 export interface AccountMount {
@@ -337,7 +339,12 @@ export function renderOverride(
   // O Compose junta estas portas às do docker-compose.yml.
   if (extraPorts.length) lines.push('    ports:', ...extraPorts.map((p) => `      - ${yamlString(p)}`));
   const binds = [...mounts, ...codex].flatMap((m) => m.binds);
-  if (usageDir) binds.push({ source: usageDir, target: CONTAINER_USAGE_DIR });
+  if (usageDir) {
+    binds.push({ source: usageDir, target: CONTAINER_USAGE_DIR });
+    // Sala de Marketing (fork Vela): a janela grava a decisão do dono na pauta. Só essa subpasta é gravável;
+    // o resto do /usage continua somente leitura.
+    binds.push({ source: join(usageDir, 'marketing', 'pauta'), target: `${CONTAINER_USAGE_DIR}/marketing/pauta`, gravavel: true });
+  }
   // Acesso remoto: SÓ a pasta do certificado do servidor (a chave da CA fica no host).
   if (remoteTlsDir) binds.push({ source: remoteTlsDir, target: CONTAINER_REMOTE_TLS_DIR });
   if (binds.length) {
@@ -347,7 +354,7 @@ export function renderOverride(
         '      - type: bind',
         `        source: ${yamlString(b.source)}`,
         `        target: ${yamlString(b.target)}`,
-        '        read_only: true',
+        `        read_only: ${b.gravavel ? 'false' : 'true'}`,
         '        bind:',
         '          create_host_path: false',
       );
@@ -503,6 +510,8 @@ function migrateStateDir(): void {
 function ensureUsageDir(): string | undefined {
   try {
     mkdirSync(USAGE_DIR, { recursive: true, mode: 0o700 });
+    // A pasta da pauta (montada gravável) precisa existir: o bind não cria caminho no host.
+    mkdirSync(join(USAGE_DIR, 'marketing', 'pauta'), { recursive: true, mode: 0o700 });
     return realDir(USAGE_DIR);
   } catch (err) {
     warn(tr('não consegui criar {0} ({1}); o uso do statusline não vai aparecer no container.', [tildify(USAGE_DIR), (err as Error).message]));
