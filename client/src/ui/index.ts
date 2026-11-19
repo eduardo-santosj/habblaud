@@ -14,6 +14,7 @@ import type { Selection, WorldApi } from '../world/api';
 import type { PanelName, TerminalRouter, UiComponent, UiContext } from './context';
 import { DayLauncher } from './daystats-launcher';
 import { InfraLauncher, INFRA_ROOM_ID } from './infra';
+import { MarketingLauncher, MARKETING_ROOM_ID } from './marketing';
 import { RoomRenamer } from './roomrename';
 import { h } from './dom';
 import { Drawer } from './drawer';
@@ -279,10 +280,17 @@ export function createUI(root: HTMLElement, store: OfficeStore, world: WorldApi,
   // Sala de Infra (fork Vela): botão na barra com a cor geral; só aparece quando o servidor tem /api/infra.
   const infra = new InfraLauncher(ctx, (el) => root.append(el));
   topbar.addPanelButton(infra.button);
-  // Botão direito numa sala (lista lateral ou escritório): renomear. Na sala de Infra, abre o quadro dela.
+  // Sala de Marketing (fork Vela): ponto no botão quando há post esperando aprovação.
+  const marketing = new MarketingLauncher(ctx, (el) => root.append(el));
+  topbar.addPanelButton(marketing.button);
+  // Botão direito numa sala (lista lateral ou escritório): renomear. Nas salas de Infra e Marketing, abre o quadro delas.
   const renamer = new RoomRenamer(ctx);
   ctx.renameRoom = (id, at) => renamer.open(id, at);
-  world.onRoomContextMenu?.((id, at) => (id === INFRA_ROOM_ID && !infra.button.hidden ? infra.toggle() : renamer.open(id, at)));
+  world.onRoomContextMenu?.((id, at) => {
+    if (id === INFRA_ROOM_ID && !infra.button.hidden) infra.toggle();
+    else if (id === MARKETING_ROOM_ID && !marketing.button.hidden) marketing.toggle();
+    else renamer.open(id, at);
+  });
   const empty = new EmptyState(ctx);
   const banner = new ConnectionBanner(ctx);
   const update = new UpdateBanner(store);
@@ -301,7 +309,7 @@ export function createUI(root: HTMLElement, store: OfficeStore, world: WorldApi,
   }));
   drawer.onLayoutChange = () => applyLayout();
 
-  const components: UiComponent[] = [topbar, sidebar, drawer, terminal, pty, history, deliveries, feed, toasts, settings, empty, banner, tip, notifier, splash, timelapse, sound, day, infra, updateToaster, worldDialog, popups, worldChip];
+  const components: UiComponent[] = [topbar, sidebar, drawer, terminal, pty, history, deliveries, feed, toasts, settings, empty, banner, tip, notifier, splash, timelapse, sound, day, infra, marketing, updateToaster, worldDialog, popups, worldChip];
   if (scene) components.push(scene);
   root.append(worldSocial.el);
   components.push(worldSocial);

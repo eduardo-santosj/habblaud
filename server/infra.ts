@@ -4,7 +4,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { gerarAlertas, type InfraConfig, type InfraCustoFile, type InfraSnapshot, type InfraStatusFile } from '../shared/infra';
 
-class ArquivoJson<T> {
+export class ArquivoJson<T> {
   private mtimeMs = -1;
   private valor: T | null = null;
 

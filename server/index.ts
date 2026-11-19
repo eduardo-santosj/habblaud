@@ -60,6 +60,7 @@ import { BuildingUplink } from './world/uplink';
 import { WorldViewer } from './world/viewer';
 import { areaRoomId, MaestriRoles, parsePathRooms, placeByArea } from './maestri';
 import { InfraService } from './infra';
+import { MarketingService } from './marketing';
 
 const config = loadConfig();
 const startedAt = Date.now();
@@ -120,6 +121,7 @@ const pathRooms = parsePathRooms(process.env.HABBLAUD_PATH_ROOMS);
 // HABBLAUD_ROOMS=areas: salas por área (Coordenação, Front, Back, UI, QA...) em vez de uma sala por projeto.
 const modoAreas = process.env.HABBLAUD_ROOMS?.trim().toLowerCase() === 'areas';
 const infra = new InfraService(config.usageDir);
+const marketing = new MarketingService(config.usageDir);
 const office = new Office({
   names,
   roomAlias: (path) => roomAliases.get(path),
@@ -141,7 +143,10 @@ const office = new Office({
   placeByArea: modoAreas ? (cwd) => placeByArea(cwd, maestriRoles, pathRooms) : undefined,
 });
 // Modo por área: a sala de Infra existe sempre (mostra a saúde dos sistemas mesmo sem nenhum agente nela).
-if (modoAreas) office.pinRoom(areaRoomId('Infra'));
+if (modoAreas) {
+  office.pinRoom(areaRoomId('Infra'));
+  office.pinRoom(areaRoomId('Marketing'));
+}
 // Fontes de agentes, uma por ferramenta (sources/source.ts): a do Claude Code e, depois dela, a do Codex (quando há
 // pastas do Codex; HABBLAUD_CODEX=0 desliga), com o histórico dela no HistorySet abaixo e as contas registradas por
 // ela mesma (accounts.setProviderAccounts). `codex` também recebe os eventos dos hooks do Codex (CodexLive).
@@ -387,6 +392,7 @@ const api = createApiHandler({
   codexLive,
   stats,
   infra: modoAreas ? () => infra.snapshot() : undefined,
+  marketing: modoAreas ? { snapshot: () => marketing.snapshot(), decidir: (s, i, st, n) => marketing.decidir(s, i, st, n) } : undefined,
   updates,
   remote: config.remote ? { is: isRemoteRequest, allows: (f) => config.remote!.allow.has(f) } : undefined,
   world: world ? createWorldRoutes(world, worldViewer, worldSocial) : undefined,

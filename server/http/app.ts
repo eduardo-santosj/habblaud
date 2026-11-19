@@ -81,6 +81,11 @@ export interface ApiDeps {
   stats?: DayStatsService;
   /** Sala de Infra (fork Vela): status das máquinas e dos sistemas, custo e alertas (GET /api/infra, só local). */
   infra?: () => unknown;
+  /** Sala de Marketing (fork Vela): métricas do Instagram e pauta semanal (GET /api/marketing, POST /api/marketing/decidir; só local). */
+  marketing?: {
+    snapshot(): unknown;
+    decidir(semana: string, id: string, status: string, nota?: string): unknown;
+  };
   /** Verificação de versão nova no GitHub (GET /api/updates, POST /api/updates/check; updates/checker.ts). */
   updates?: {
     status(): UpdateStatus;
@@ -691,6 +696,33 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
       else if (isRemote(req)) sendJson(res, 403, { error: tr('não liberado no acesso remoto') });
       else if (!deps.infra) sendJson(res, 404, { error: tr('sala de infra desligada') });
       else sendJson(res, 200, deps.infra());
+      return true;
+    }
+    if (path === '/api/marketing') {
+      if (method !== 'GET') methodNotAllowed(res, 'GET');
+      else if (isRemote(req)) sendJson(res, 403, { error: tr('não liberado no acesso remoto') });
+      else if (!deps.marketing) sendJson(res, 404, { error: tr('sala de marketing desligada') });
+      else sendJson(res, 200, deps.marketing.snapshot());
+      return true;
+    }
+    if (path === '/api/marketing/decidir') {
+      // Aprovar ou pedir ajuste na pauta: só no próprio computador (localhost), nunca pelo acesso remoto.
+      if (method !== 'POST') methodNotAllowed(res, 'POST');
+      else if (isRemote(req) || !trusted(req)) sendJson(res, 403, { error: tr('só pelo próprio computador (http://localhost)') });
+      else if (!deps.marketing) sendJson(res, 404, { error: tr('sala de marketing desligada') });
+      else
+        readJson(req)
+          .then((body) => {
+            const b = body as { semana?: unknown; id?: unknown; status?: unknown; nota?: unknown };
+            if (typeof b?.semana !== 'string' || typeof b.id !== 'string' || typeof b.status !== 'string') throw new HttpError(400, tr('esperado {semana, id, status}'));
+            try {
+              sendJson(res, 200, deps.marketing!.decidir(b.semana, b.id, b.status, typeof b.nota === 'string' ? b.nota : undefined));
+            } catch (e) {
+              const msg = (e as Error).message;
+              throw new HttpError(/não encontrad/.test(msg) ? 404 : 400, msg);
+            }
+          })
+          .catch((err) => fail(res, err));
       return true;
     }
     if (path === '/api/demo') {
