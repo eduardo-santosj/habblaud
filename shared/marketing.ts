@@ -127,6 +127,8 @@ export interface MktPautaItem {
   decididoEm?: string;
   /** Segunda etapa: a arte (existe depois que o roteiro foi aprovado e o produtor pegou o item). */
   arte?: MktArte;
+  /** Quando foi postado (à mão pelo dono ou pelo publicador). */
+  publicadoEm?: string;
 }
 
 export interface MktPautaFile {
@@ -262,6 +264,35 @@ export function decidirArte(pauta: MktPautaFile, id: string, status: string, not
   return { ...pauta, itens: pauta.itens.map((i) => (i.id === id ? novo : i)) };
 }
 
+/**
+ * Momento do post (ms) a partir de dia + hora ("18h", "18:30" ou "18h30"), no fuso de São Paulo (UTC-3, sem
+ * horário de verão desde 2019). Sem hora válida, null.
+ */
+export function momentoDoPost(i: Pick<MktPautaItem, 'dia' | 'hora'>): number | null {
+  const m = /^(\d{1,2})(?:[:h](\d{2})?)?h?$/i.exec((i.hora ?? '').trim());
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(i.dia)) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2] ?? 0);
+  if (hh > 23 || mm > 59) return null;
+  return Date.parse(`${i.dia}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00-03:00`);
+}
+
+/** Pronto para postar: roteiro e arte aprovados, ainda não publicado. */
+export const prontoParaPostar = (i: MktPautaItem) => i.status === 'aprovado' && i.arte?.status === 'aprovada';
+
+/**
+ * O dono avisa que postou à mão (enquanto não há publicador automático). Só com roteiro e arte aprovados;
+ * depois disso o item não muda mais. Lança Error com o motivo.
+ */
+export function marcarPostado(pauta: MktPautaFile, id: string, agora = new Date()): MktPautaFile {
+  const item = pauta.itens.find((i) => i.id === id);
+  if (!item) throw new Error('item não encontrado na pauta');
+  if (item.status === 'publicado') throw new Error('item já publicado');
+  if (!prontoParaPostar(item)) throw new Error('só dá para marcar como postado com o roteiro e a arte aprovados');
+  const novo: MktPautaItem = { ...item, status: 'publicado', publicadoEm: agora.toISOString() };
+  return { ...pauta, itens: pauta.itens.map((i) => (i.id === id ? novo : i)) };
+}
+
 /** O produtor deve fazer (ou refazer) a arte deste item? */
 export function precisaProduzir(i: MktPautaItem): boolean {
   return i.status === 'aprovado' && (!i.arte || i.arte.status === 'ajustar');
@@ -287,6 +318,18 @@ export function gerarAlertasMkt(metricas: MktMetricasFile | null, pautas: readon
   if (roteiros) alertas.push({ nivel: 'info', texto: `${roteiros} roteiro(s) esperando sua aprovação.` });
   if (artes) alertas.push({ nivel: 'info', texto: `${artes} arte(s) pronta(s) esperando sua aprovação.` });
   if (falhas) alertas.push({ nivel: 'aviso', texto: `${falhas} arte(s) não saíram: veja o motivo no post e peça de novo.` });
+  // Lembretes de postagem (enquanto a publicação é à mão).
+  for (const i of itens) {
+    const quando = momentoDoPost(i);
+    if (quando === null || i.status !== 'aprovado') continue;
+    const hora = i.hora ?? '';
+    if (prontoParaPostar(i)) {
+      if (agora >= quando) alertas.push({ nivel: 'aviso', texto: `Passou da hora de postar "${i.tema}" (${hora}). Postou? Marque "Já postei".` });
+      else if (diaSP(quando) === hoje) alertas.push({ nivel: 'info', texto: `Hoje às ${hora}: postar "${i.tema}".` });
+    } else if (quando - agora < DIA_MS && quando > agora) {
+      alertas.push({ nivel: 'aviso', texto: `"${i.tema}" sai em menos de 24 h e a arte ainda não foi aprovada.` });
+    }
+  }
   // Da sexta em diante, a semana que vem já devia estar decidida.
   const dow = new Date(`${hoje}T12:00:00Z`).getUTCDay();
   if ((dow === 5 || dow === 6 || dow === 0) && !pautas.some((p) => p.semana === proxima && p.itens.length))

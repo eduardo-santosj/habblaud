@@ -8,6 +8,7 @@ import {
   contarPendentes,
   decidir,
   decidirArte,
+  marcarPostado,
   diaSP,
   ITEM_ID_RE,
   tipoDaMidia,
@@ -80,13 +81,19 @@ export class MarketingService {
     };
   }
 
-  /** Decisão do dono num item (etapa "roteiro" ou "arte"). Lança Error com o motivo (vira 400/404 na rota). */
+  /** Decisão do dono num item (etapa "roteiro", "arte" ou "postagem"). Lança Error com o motivo (vira 400/404 na rota). */
   decidir(semana: string, id: string, status: string, nota?: string, etapa: string = 'roteiro'): MktPautaFile {
     if (!SEMANA_RE.test(semana)) throw new Error('semana inválida');
-    if (etapa !== 'roteiro' && etapa !== 'arte') throw new Error('etapa inválida');
+    if (etapa !== 'roteiro' && etapa !== 'arte' && etapa !== 'postagem') throw new Error('etapa inválida');
     const atual = this.lerPauta(semana);
     if (!atual) throw new Error('pauta não encontrada');
-    const nova = etapa === 'arte' ? decidirArte(atual, id, status, nota) : decidir(atual, id, status, nota);
+    let nova: MktPautaFile;
+    if (etapa === 'arte') nova = decidirArte(atual, id, status, nota);
+    else if (etapa === 'postagem') {
+      // Postagem à mão: o único status aceito é "publicado".
+      if (status !== 'publicado') throw new Error(`status inválido: ${status}`);
+      nova = marcarPostado(atual, id);
+    } else nova = decidir(atual, id, status, nota);
     mkdirSync(this.pautaDir, { recursive: true });
     const arq = join(this.pautaDir, `${semana}.json`);
     const tmp = `${arq}.${process.pid}.tmp`;

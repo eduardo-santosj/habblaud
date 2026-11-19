@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contarPendentes, decidir, decidirArte, diaSP, engajamento, ganhoEm, gerarAlertasMkt, precisaProduzir, registrarSeguidores, resumirConta, segundaDe, tipoDaMidia, type MktPautaFile, type MktPautaItem, type MktPost } from './marketing';
+import { contarPendentes, decidir, decidirArte, marcarPostado, momentoDoPost, diaSP, engajamento, ganhoEm, gerarAlertasMkt, precisaProduzir, registrarSeguidores, resumirConta, segundaDe, tipoDaMidia, type MktPautaFile, type MktPautaItem, type MktPost } from './marketing';
 
 const post = (p: Partial<MktPost>): MktPost => ({ id: 'p', tipo: 'IMAGE', data: '2026-11-10T12:00:00+0000', legenda: '', curtidas: 0, comentarios: 0, ...p });
 
@@ -142,5 +142,41 @@ describe('arte (segunda etapa)', () => {
     expect(tipoDaMidia('01.png')).toBe('image/png');
     expect(tipoDaMidia('reels.MP4')).toBe('video/mp4');
     for (const ruim of ['../x.png', 'a/b.png', '..png', 'x.svg', 'x.html', '.png', 'x'.repeat(130) + '.png']) expect(tipoDaMidia(ruim)).toBeNull();
+  });
+});
+
+describe('postagem', () => {
+  it('momento do post no fuso de São Paulo, aceitando 18h, 18:30 e 18h30', () => {
+    expect(momentoDoPost({ dia: '2026-11-25', hora: '12h' })).toBe(Date.parse('2026-11-25T15:00:00Z'));
+    expect(momentoDoPost({ dia: '2026-11-25', hora: '18:30' })).toBe(Date.parse('2026-11-25T21:30:00Z'));
+    expect(momentoDoPost({ dia: '2026-11-25', hora: '9h05' })).toBe(Date.parse('2026-11-25T12:05:00Z'));
+    for (const hora of [undefined, '', 'tarde', '25h', '18:75']) expect(momentoDoPost({ dia: '2026-11-25', hora })).toBeNull();
+  });
+
+  it('marcar como postado só com roteiro e arte aprovados, e depois não muda mais', () => {
+    const item: MktPautaItem = { id: 'a', conta: 'loja', dia: '2026-11-25', formato: 'carrossel', tema: 'T', legenda: 'L', status: 'aprovado' };
+    const p = (arte?: MktPautaItem['arte']): MktPautaFile => ({ semana: '2026-11-23', geradaEm: 'x', itens: [{ ...item, arte }] });
+    expect(() => marcarPostado(p({ status: 'pronta', arquivos: ['01.png'], versao: 1 }), 'a')).toThrow(/aprovados/);
+    const feito = marcarPostado(p({ status: 'aprovada', arquivos: ['01.png'], versao: 1 }), 'a', new Date('2026-11-25T15:10:00Z'));
+    expect(feito.itens[0]).toMatchObject({ status: 'publicado', publicadoEm: '2026-11-25T15:10:00.000Z' });
+    expect(() => marcarPostado(feito, 'a')).toThrow(/já publicado/);
+    expect(() => decidir(feito, 'a', 'proposta')).toThrow(/publicado/);
+  });
+});
+
+describe('lembretes de postagem nos alertas', () => {
+  const pauta = (arte: MktPautaItem['arte']): MktPautaFile => ({
+    semana: '2026-11-23',
+    geradaEm: 'x',
+    itens: [{ id: 'a', conta: 'loja', dia: '2026-11-25', hora: '12h', formato: 'carrossel', tema: 'Sinais', legenda: 'L', status: 'aprovado', arte }],
+  });
+  const aprovada = { status: 'aprovada' as const, arquivos: ['01.png'], versao: 1 };
+  const textos = (arte: MktPautaItem['arte'], quando: string) => gerarAlertasMkt(null, [pauta(arte)], Date.parse(quando)).map((a) => a.texto).join(' | ');
+
+  it('no dia avisa a hora; depois da hora cobra o "Já postei"; arte não aprovada perto da hora vira aviso', () => {
+    expect(textos(aprovada, '2026-11-25T11:00:00Z')).toMatch(/Hoje às 12h/);
+    expect(textos(aprovada, '2026-11-25T16:00:00Z')).toMatch(/Passou da hora/);
+    expect(textos(aprovada, '2026-11-24T11:00:00Z')).not.toMatch(/Hoje|Passou/);
+    expect(textos({ ...aprovada, status: 'pronta' }, '2026-11-24T20:00:00Z')).toMatch(/menos de 24 h/);
   });
 });

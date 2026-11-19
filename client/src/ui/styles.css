@@ -11277,3 +11277,7 @@ a.ui-mkt__post-nome:hover { text-decoration: underline; }
 .ui-mkt__previa-img img { height: 220px; width: auto; display: block; }
 .ui-mkt__previa-video { flex: 0 0 auto; height: 320px; max-width: 100%; border-radius: 6px; background: #000; }
 @media (max-width: 480px) { .ui-mkt__previa-img img { height: 180px; } .ui-mkt__previa-video { height: 260px; } }
+.ui-mkt__postar { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--ui-line); display: flex; flex-direction: column; gap: 6px; }
+.ui-mkt__postar h5 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ui-muted); }
+.ui-mkt__baixar { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+.ui-mkt__baixar-link { color: var(--ui-text); text-decoration: underline; }

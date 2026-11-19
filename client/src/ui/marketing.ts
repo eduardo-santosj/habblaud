@@ -6,7 +6,7 @@
 // O botão da barra mostra um ponto quando há post esperando aprovação. Sem a rota (modo por projeto, acesso
 // remoto), o botão nem aparece.
 import type { MktArte, MktArteStatus, MktContaMetricas, MktDecisao, MktDecisaoArte, MktFormato, MktPautaFile, MktPautaItem, MktPost, MktSnapshot, MktStatus } from '../../../shared/marketing';
-import { ehVideo, engajamento, interacoesDo } from '../../../shared/marketing';
+import { ehVideo, engajamento, interacoesDo, momentoDoPost } from '../../../shared/marketing';
 import type { UiComponent, UiContext } from './context';
 import { h, iconButton } from './dom';
 import { ICONS } from './icons';
@@ -36,8 +36,8 @@ const ARTE: Record<MktArteStatus, string> = {
   falhou: 'A arte não saiu.',
 };
 
-type Etapa = 'roteiro' | 'arte';
-type Decisao = { id: string; status: MktDecisao | MktDecisaoArte; nota?: string };
+type Etapa = 'roteiro' | 'arte' | 'postagem';
+type Decisao = { id: string; status: MktDecisao | MktDecisaoArte | 'publicado'; nota?: string };
 const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
 const num = (v?: number) => (typeof v === 'number' ? Math.round(v).toLocaleString('pt-BR') : '-');
@@ -75,6 +75,8 @@ export class MarketingLauncher implements UiComponent {
   private ajustando: string | null = null;
   /** Assinatura do último snapshot desenhado: sem mudança, não redesenha (não corta o vídeo da prévia). */
   private desenhado = '';
+  /** Item com o "Já postei" esperando a confirmação (segundo clique). */
+  private confirmandoPost: string | null = null;
   private ocupado = false;
 
   constructor(
@@ -272,7 +274,10 @@ export class MarketingLauncher implements UiComponent {
     det.append(h('h5', { text: tr('Legenda') }), h('p', { class: 'ui-mkt__texto', text: it.legenda }));
     li.append(det);
     if (it.nota) li.append(h('p', { class: 'ui-mkt__nota', text: `${tr('Seu ajuste')}: ${it.nota}` }));
-    if (it.status === 'publicado') return li;
+    if (it.status === 'publicado') {
+      li.append(h('p', { class: 'ui-mkt__arte-st', text: `${tr('Postado em')} ${horaCurta(it.publicadoEm)}` }));
+      return li;
+    }
 
     const acoes = h('div', { class: 'ui-mkt__acoes' });
     const botao = (texto: string, status: MktDecisao, primario = false) =>
@@ -354,6 +359,7 @@ export class MarketingLauncher implements UiComponent {
       });
     if (a.status === 'pronta') acoes.append(botao(tr('Aprovar arte'), 'aprovada', true), pedirAjuste());
     if (a.status === 'aprovada') acoes.append(pedirAjuste(), botao(tr('Voltar a conferir'), 'pronta'));
+    if (a.status === 'aprovada') box.append(this.postagem(semana, it, a));
     if (a.status === 'falhou') acoes.append(botao(tr('Tentar de novo'), 'ajustar', true));
     if (acoes.childElementCount) box.append(acoes);
 
@@ -379,6 +385,49 @@ export class MarketingLauncher implements UiComponent {
       box.append(h('div', { class: 'ui-mkt__ajuste' }, campo, h('div', { class: 'ui-mkt__acoes' }, enviar, cancelar)));
       queueMicrotask(() => campo.focus());
     }
+    return box;
+  }
+
+  /** Kit para postar à mão: quando, legenda para copiar, arquivos para baixar e o "Já postei" (com confirmação). */
+  private postagem(semana: string, it: MktPautaItem, a: MktArte): HTMLElement {
+    const quando = momentoDoPost(it);
+    const box = h('div', { class: 'ui-mkt__postar' }, h('h5', { text: tr('Para postar') }));
+    box.append(
+      h('p', {
+        class: 'ui-mkt__arte-st',
+        text: quando === null ? tr('Sem horário definido na pauta.') : `${tr('Postar')} ${diaSemana(it.dia)} ${tr('às')} ${it.hora}${Date.now() > quando ? ` · ${tr('passou da hora')}` : ''}`,
+      }),
+    );
+    const copiar = h('button', { class: 'ui-btn ui-btn--sm', type: 'button', text: tr('Copiar legenda') });
+    copiar.addEventListener('click', () => {
+      void navigator.clipboard.writeText(it.legenda).then(
+        () => (copiar.textContent = tr('Legenda copiada')),
+        () => this.mostrarAviso(tr('Não consegui copiar: selecione a legenda em "Roteiro e legenda".')),
+      );
+    });
+    const arquivos = h('div', { class: 'ui-mkt__baixar' });
+    for (const nome of a.arquivos) {
+      const src = `/api/marketing/midia/${encodeURIComponent(semana)}/${encodeURIComponent(it.id)}/${encodeURIComponent(nome)}?v=${a.versao}`;
+      arquivos.append(h('a', { class: 'ui-mkt__baixar-link', text: nome, attrs: { href: src, download: `${it.id}-${nome}` } }));
+    }
+    const confirmando = this.confirmandoPost === it.id;
+    const postei = h('button', {
+      class: `ui-btn ui-btn--sm${confirmando ? ' ui-btn--primary' : ''}`,
+      type: 'button',
+      text: confirmando ? tr('Confirmar: já postei') : tr('Já postei'),
+      on: {
+        click: () => {
+          if (!confirmando) {
+            this.confirmandoPost = it.id;
+            this.redesenhar();
+            return;
+          }
+          this.confirmandoPost = null;
+          void this.decidirItens(semana, [{ id: it.id, status: 'publicado' }], 'postagem');
+        },
+      },
+    });
+    box.append(h('div', { class: 'ui-mkt__acoes' }, copiar, postei), arquivos);
     return box;
   }
 
