@@ -1,12 +1,16 @@
 // Sala de Marketing (fork Vela): lê o que o coletor do host grava em <usageDir>/marketing/ (metricas.json e
-// config.json) e as pautas em marketing/pauta/<segunda>.json; aplica a decisão do dono num item da pauta.
+// config.json) e as pautas em marketing/pauta/<segunda>.json; aplica a decisão do dono (roteiro ou arte) num item
+// da pauta e entrega a mídia da arte (marketing/midia/<semana>/<id>/<arquivo>) para a prévia.
 // O servidor nunca fala com a Meta e nunca vê o token: só lê e escreve esses arquivos.
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   contarPendentes,
   decidir,
+  decidirArte,
   diaSP,
+  ITEM_ID_RE,
+  tipoDaMidia,
   gerarAlertasMkt,
   resumirConta,
   segundaDe,
@@ -76,17 +80,31 @@ export class MarketingService {
     };
   }
 
-  /** Decisão do dono num item. Lança Error com o motivo (vira 400/404 na rota). */
-  decidir(semana: string, id: string, status: string, nota?: string): MktPautaFile {
+  /** Decisão do dono num item (etapa "roteiro" ou "arte"). Lança Error com o motivo (vira 400/404 na rota). */
+  decidir(semana: string, id: string, status: string, nota?: string, etapa: string = 'roteiro'): MktPautaFile {
     if (!SEMANA_RE.test(semana)) throw new Error('semana inválida');
+    if (etapa !== 'roteiro' && etapa !== 'arte') throw new Error('etapa inválida');
     const atual = this.lerPauta(semana);
     if (!atual) throw new Error('pauta não encontrada');
-    const nova = decidir(atual, id, status, nota);
+    const nova = etapa === 'arte' ? decidirArte(atual, id, status, nota) : decidir(atual, id, status, nota);
     mkdirSync(this.pautaDir, { recursive: true });
     const arq = join(this.pautaDir, `${semana}.json`);
     const tmp = `${arq}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(nova, null, 2)}\n`);
     renameSync(tmp, arq);
     return nova;
+  }
+
+  /** Arquivo da arte para a prévia. Só nomes simples de imagem ou vídeo; qualquer outra coisa vira null (404). */
+  midia(semana: string, id: string, nome: string): { caminho: string; tipo: string; tamanho: number } | null {
+    const tipo = tipoDaMidia(nome);
+    if (!tipo || !SEMANA_RE.test(semana) || !ITEM_ID_RE.test(id)) return null;
+    const caminho = join(this.dir, 'midia', semana, id, nome);
+    try {
+      const st = statSync(caminho);
+      return st.isFile() ? { caminho, tipo, tamanho: st.size } : null;
+    } catch {
+      return null;
+    }
   }
 }

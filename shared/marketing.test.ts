@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contarPendentes, decidir, diaSP, engajamento, ganhoEm, gerarAlertasMkt, registrarSeguidores, resumirConta, segundaDe, type MktPautaFile, type MktPost } from './marketing';
+import { contarPendentes, decidir, decidirArte, diaSP, engajamento, ganhoEm, gerarAlertasMkt, precisaProduzir, registrarSeguidores, resumirConta, segundaDe, tipoDaMidia, type MktPautaFile, type MktPautaItem, type MktPost } from './marketing';
 
 const post = (p: Partial<MktPost>): MktPost => ({ id: 'p', tipo: 'IMAGE', data: '2026-11-10T12:00:00+0000', legenda: '', curtidas: 0, comentarios: 0, ...p });
 
@@ -98,5 +98,49 @@ describe('pauta', () => {
   it('coletor parado há mais de um dia avisa', () => {
     const m = { atualizadoEm: '2026-11-17T00:00:00Z', contas: [] };
     expect(gerarAlertasMkt(m, [], Date.parse('2026-11-18T12:00:00Z')).some((a) => /coletor/.test(a.texto))).toBe(true);
+  });
+});
+
+describe('arte (segunda etapa)', () => {
+  const base: MktPautaItem = { id: 'a', conta: 'loja', dia: '2026-11-24', formato: 'carrossel', tema: 'T', legenda: 'L', status: 'aprovado' };
+  const com = (arte?: MktPautaItem['arte'], status: MktPautaItem['status'] = 'aprovado'): MktPautaFile => ({ semana: '2026-11-23', geradaEm: 'x', itens: [{ ...base, status, arte }] });
+  const pronta = { status: 'pronta' as const, arquivos: ['01.png', '02.png'], versao: 1 };
+
+  it('roteiro aprovado sem arte (ou com ajuste pedido) entra na fila do produtor', () => {
+    expect(precisaProduzir(base)).toBe(true);
+    expect(precisaProduzir({ ...base, arte: { ...pronta, status: 'ajustar' } })).toBe(true);
+    expect(precisaProduzir({ ...base, arte: pronta })).toBe(false);
+    expect(precisaProduzir({ ...base, status: 'proposta' })).toBe(false);
+  });
+
+  it('aprovar a arte pronta; pedir ajuste exige nota, menos quando a produção falhou', () => {
+    expect(decidirArte(com(pronta), 'a', 'aprovada').itens[0]!.arte!.status).toBe('aprovada');
+    expect(() => decidirArte(com(pronta), 'a', 'ajustar', ' ')).toThrow(/ajustar/);
+    const aj = decidirArte(com(pronta), 'a', 'ajustar', 'logo maior').itens[0]!.arte!;
+    expect(aj).toMatchObject({ status: 'ajustar', nota: 'logo maior', arquivos: ['01.png', '02.png'], versao: 1 });
+    const falhou = decidirArte(com({ status: 'falhou', arquivos: [], erro: 'timeout', versao: 2 }), 'a', 'ajustar').itens[0]!.arte!;
+    expect(falhou.status).toBe('ajustar');
+    expect(falhou.erro).toBeUndefined();
+  });
+
+  it('recusa arte inexistente, em produção, roteiro não aprovado e status fora da lista', () => {
+    expect(() => decidirArte(com(undefined), 'a', 'aprovada')).toThrow(/ainda não existe/);
+    expect(() => decidirArte(com({ ...pronta, status: 'produzindo' }), 'a', 'aprovada')).toThrow(/não está pronta/);
+    expect(() => decidirArte(com({ ...pronta, status: 'produzindo' }), 'a', 'ajustar', 'x')).toThrow(/refeita/);
+    expect(() => decidirArte(com(pronta, 'proposta'), 'a', 'aprovada')).toThrow(/ainda não existe/);
+    expect(() => decidirArte(com(pronta), 'a', 'publicado')).toThrow(/inválido/);
+  });
+
+  it('roteiro que sai de aprovado perde a arte; arte pronta conta como pendente', () => {
+    expect(decidir(com(pronta), 'a', 'ajustar', 'mudar o tema').itens[0]!.arte).toBeUndefined();
+    expect(decidir(com(pronta), 'a', 'aprovado').itens[0]!.arte).toEqual(pronta);
+    expect(contarPendentes([com(pronta)])).toBe(1);
+    expect(contarPendentes([com({ ...pronta, status: 'aprovada' })])).toBe(0);
+  });
+
+  it('nome de mídia: só arquivo simples com extensão de imagem ou vídeo', () => {
+    expect(tipoDaMidia('01.png')).toBe('image/png');
+    expect(tipoDaMidia('reels.MP4')).toBe('video/mp4');
+    for (const ruim of ['../x.png', 'a/b.png', '..png', 'x.svg', 'x.html', '.png', 'x'.repeat(130) + '.png']) expect(tipoDaMidia(ruim)).toBeNull();
   });
 });

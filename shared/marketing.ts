@@ -4,6 +4,10 @@
 // Fluxo: o coletor lê as métricas das contas do Instagram (só leitura, token no cofre do host) e grava
 // metricas.json; a pauta da semana mora em pauta/<segunda>.json, cada item nasce "proposta" e só o dono muda
 // para aprovado, ajustar ou descartado. "publicado" só quem marca é o publicador, nunca a janela.
+//
+// Aprovação em duas etapas: (1) o roteiro; (2) a arte. Roteiro aprovado entra na fila do produtor (fora deste
+// repositório), que grava os arquivos em midia/<semana>/<id>/ e marca a arte "pronta"; o dono aprova a arte ou
+// pede ajuste (o produtor refaz). Só item com arte aprovada pode ser publicado.
 
 export type MktFormato = 'reels' | 'carrossel' | 'post' | 'story';
 export type MktStatus = 'proposta' | 'aprovado' | 'ajustar' | 'descartado' | 'publicado';
@@ -11,6 +15,46 @@ export type MktStatus = 'proposta' | 'aprovado' | 'ajustar' | 'descartado' | 'pu
 /** O que a janela pode pedir. "publicado" fica de fora de propósito. */
 export const DECISOES = ['proposta', 'aprovado', 'ajustar', 'descartado'] as const;
 export type MktDecisao = (typeof DECISOES)[number];
+
+/** Estado da arte de um item: o produtor marca produzindo, pronta e falhou; o dono marca aprovada e ajustar. */
+export type MktArteStatus = 'produzindo' | 'pronta' | 'aprovada' | 'ajustar' | 'falhou';
+/** O que a janela pode pedir na etapa da arte ("pronta" = voltar a aprovação). */
+export const DECISOES_ARTE = ['pronta', 'aprovada', 'ajustar'] as const;
+export type MktDecisaoArte = (typeof DECISOES_ARTE)[number];
+
+export interface MktArte {
+  status: MktArteStatus;
+  /** Arquivos em midia/<semana>/<id>/, na ordem de exibição (slides do carrossel, vídeo). Só o nome. */
+  arquivos: string[];
+  /** Ajuste pedido pelo dono na arte. */
+  nota?: string;
+  /** Motivo da falha do produtor. */
+  erro?: string;
+  /** Sobe a cada nova produção (o produtor só grava se a versão ainda for a dele). */
+  versao: number;
+  atualizadoEm?: string;
+}
+
+/** Nome de arquivo de mídia aceito (sem caminho) e o tipo que o servidor devolve. */
+export const MIDIA_TIPOS: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+};
+const MIDIA_NOME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
+export const ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
+
+/** Tipo da mídia pelo nome, ou null se o nome não for aceito (barra, "..", extensão fora da lista). */
+export function tipoDaMidia(nome: string): string | null {
+  if (!MIDIA_NOME_RE.test(nome) || nome.includes('..')) return null;
+  const ext = nome.slice(nome.lastIndexOf('.') + 1).toLowerCase();
+  return MIDIA_TIPOS[ext] ?? null;
+}
+
+export const ehVideo = (nome: string) => /\.(mp4|webm)$/i.test(nome);
 
 export interface MktConfigConta {
   /** Id curto e estável (ex.: "loja"). */
@@ -81,6 +125,8 @@ export interface MktPautaItem {
   /** Comentário do dono ao pedir ajuste. */
   nota?: string;
   decididoEm?: string;
+  /** Segunda etapa: a arte (existe depois que o roteiro foi aprovado e o produtor pegou o item). */
+  arte?: MktArte;
 }
 
 export interface MktPautaFile {
@@ -186,12 +232,44 @@ export function decidir(pauta: MktPautaFile, id: string, status: string, nota?: 
   if (status === 'ajustar') novo.nota = textoNota;
   else if (textoNota) novo.nota = textoNota;
   else delete novo.nota;
+  // Roteiro saiu de aprovado: a arte feita para ele não vale mais (os arquivos ficam no disco).
+  if (status !== 'aprovado') delete novo.arte;
   return { ...pauta, itens: pauta.itens.map((i) => (i.id === id ? novo : i)) };
 }
 
-/** Itens que ainda esperam o dono (propostas). */
+/** Decisão do dono na arte. Só com o roteiro aprovado e a arte já feita. Lança Error com o motivo. */
+export function decidirArte(pauta: MktPautaFile, id: string, status: string, nota?: string, agora = new Date()): MktPautaFile {
+  if (!(DECISOES_ARTE as readonly string[]).includes(status)) throw new Error(`status inválido: ${status}`);
+  const item = pauta.itens.find((i) => i.id === id);
+  if (!item) throw new Error('item não encontrado na pauta');
+  if (item.status === 'publicado') throw new Error('item já publicado');
+  if (item.status !== 'aprovado' || !item.arte) throw new Error('a arte ainda não existe (aprove o roteiro primeiro)');
+  const atual = item.arte.status;
+  const textoNota = typeof nota === 'string' ? nota.trim().slice(0, 1000) : '';
+  if (status === 'ajustar') {
+    // Arte que falhou pode ser pedida de novo sem nota; arte pronta ou aprovada precisa dizer o que mudar.
+    if (atual === 'produzindo' || atual === 'ajustar') throw new Error('a arte já está sendo refeita');
+    if (!textoNota && atual !== 'falhou') throw new Error('diga o que ajustar na arte');
+  } else if (atual !== 'pronta' && atual !== 'aprovada') {
+    throw new Error('a arte ainda não está pronta');
+  }
+  const arte: MktArte = { ...item.arte, status: status as MktDecisaoArte, atualizadoEm: agora.toISOString() };
+  if (status === 'ajustar') {
+    if (textoNota) arte.nota = textoNota;
+    delete arte.erro;
+  }
+  const novo: MktPautaItem = { ...item, arte };
+  return { ...pauta, itens: pauta.itens.map((i) => (i.id === id ? novo : i)) };
+}
+
+/** O produtor deve fazer (ou refazer) a arte deste item? */
+export function precisaProduzir(i: MktPautaItem): boolean {
+  return i.status === 'aprovado' && (!i.arte || i.arte.status === 'ajustar');
+}
+
+/** Itens que esperam o dono: roteiros propostos e artes prontas. */
 export function contarPendentes(pautas: readonly MktPautaFile[]): number {
-  return pautas.reduce((s, p) => s + p.itens.filter((i) => i.status === 'proposta').length, 0);
+  return pautas.reduce((s, p) => s + p.itens.filter((i) => i.status === 'proposta' || (i.status === 'aprovado' && i.arte?.status === 'pronta')).length, 0);
 }
 
 export function gerarAlertasMkt(metricas: MktMetricasFile | null, pautas: readonly MktPautaFile[], agora = Date.now()): MktAlerta[] {
@@ -202,8 +280,13 @@ export function gerarAlertasMkt(metricas: MktMetricasFile | null, pautas: readon
   }
   const hoje = diaSP(agora);
   const proxima = somarDias(segundaDe(hoje), 7);
-  const pendentes = contarPendentes(pautas);
-  if (pendentes) alertas.push({ nivel: 'info', texto: `${pendentes} post(s) esperando sua aprovação.` });
+  const itens = pautas.flatMap((p) => p.itens);
+  const roteiros = itens.filter((i) => i.status === 'proposta').length;
+  const artes = itens.filter((i) => i.status === 'aprovado' && i.arte?.status === 'pronta').length;
+  const falhas = itens.filter((i) => i.status === 'aprovado' && i.arte?.status === 'falhou').length;
+  if (roteiros) alertas.push({ nivel: 'info', texto: `${roteiros} roteiro(s) esperando sua aprovação.` });
+  if (artes) alertas.push({ nivel: 'info', texto: `${artes} arte(s) pronta(s) esperando sua aprovação.` });
+  if (falhas) alertas.push({ nivel: 'aviso', texto: `${falhas} arte(s) não saíram: veja o motivo no post e peça de novo.` });
   // Da sexta em diante, a semana que vem já devia estar decidida.
   const dow = new Date(`${hoje}T12:00:00Z`).getUTCDay();
   if ((dow === 5 || dow === 6 || dow === 0) && !pautas.some((p) => p.semana === proxima && p.itens.length))

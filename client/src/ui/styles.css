@@ -11265,3 +11265,15 @@ a.ui-mkt__post-nome:hover { text-decoration: underline; }
   .ui-mkt__aviso { margin: 8px 14px 0; }
   .ui-mkt__postgrid { grid-template-columns: 1fr; }
 }
+/* Sala de Marketing: segunda etapa (arte) e prévia */
+.ui-mkt__arte { margin-top: 4px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--ui-line); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ui-mkt__arte h5 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ui-muted); }
+.ui-mkt__arte-st { margin: 0; font-size: 12px; }
+.ui-mkt__arte.is-pronta { border-style: solid; border-color: #fab219; }
+.ui-mkt__arte.is-aprovada { border-style: solid; border-color: #0ca30c; }
+.ui-mkt__arte.is-falhou { border-style: solid; border-color: #e5484d; }
+.ui-mkt__previa { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
+.ui-mkt__previa-img { flex: 0 0 auto; scroll-snap-align: start; border-radius: 6px; overflow: hidden; border: 1px solid var(--ui-line); line-height: 0; }
+.ui-mkt__previa-img img { height: 220px; width: auto; display: block; }
+.ui-mkt__previa-video { flex: 0 0 auto; height: 320px; max-width: 100%; border-radius: 6px; background: #000; }
+@media (max-width: 480px) { .ui-mkt__previa-img img { height: 180px; } .ui-mkt__previa-video { height: 260px; } }

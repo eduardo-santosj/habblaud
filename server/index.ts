@@ -392,7 +392,7 @@ const api = createApiHandler({
   codexLive,
   stats,
   infra: modoAreas ? () => infra.snapshot() : undefined,
-  marketing: modoAreas ? { snapshot: () => marketing.snapshot(), decidir: (s, i, st, n) => marketing.decidir(s, i, st, n) } : undefined,
+  marketing: modoAreas ? { snapshot: () => marketing.snapshot(), decidir: (s, i, st, n, e) => marketing.decidir(s, i, st, n, e), midia: (s, i, n) => marketing.midia(s, i, n) } : undefined,
   updates,
   remote: config.remote ? { is: isRemoteRequest, allows: (f) => config.remote!.allow.has(f) } : undefined,
   world: world ? createWorldRoutes(world, worldViewer, worldSocial) : undefined,

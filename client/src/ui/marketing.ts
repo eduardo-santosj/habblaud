@@ -1,10 +1,12 @@
 // Sala de Marketing (fork Vela): janela com os números das contas do Instagram, a pauta da semana para o dono
 // aprovar em lote e os últimos posts. Dados de GET /api/marketing (o coletor do host grava; o servidor só lê).
 // Decisões vão por POST /api/marketing/decidir, só no próprio computador. Nada é publicado daqui.
+// Duas etapas: o dono aprova o roteiro; o produtor (fora daqui) faz a arte e a janela mostra a prévia
+// (GET /api/marketing/midia/...) para o dono aprovar ou pedir ajuste.
 // O botão da barra mostra um ponto quando há post esperando aprovação. Sem a rota (modo por projeto, acesso
 // remoto), o botão nem aparece.
-import type { MktContaMetricas, MktDecisao, MktFormato, MktPautaFile, MktPautaItem, MktPost, MktSnapshot, MktStatus } from '../../../shared/marketing';
-import { engajamento, interacoesDo } from '../../../shared/marketing';
+import type { MktArte, MktArteStatus, MktContaMetricas, MktDecisao, MktDecisaoArte, MktFormato, MktPautaFile, MktPautaItem, MktPost, MktSnapshot, MktStatus } from '../../../shared/marketing';
+import { ehVideo, engajamento, interacoesDo } from '../../../shared/marketing';
 import type { UiComponent, UiContext } from './context';
 import { h, iconButton } from './dom';
 import { ICONS } from './icons';
@@ -25,7 +27,17 @@ const MKT_ICON =
   '<path fill="currentColor" d="M7 4h1v1H7zM7 6h1v1H7z"/></svg>';
 
 const FORMATO: Record<MktFormato, string> = { reels: 'Reels', carrossel: 'Carrossel', post: 'Post', story: 'Story' };
-const STATUS: Record<MktStatus, string> = { proposta: 'Esperando você', aprovado: 'Aprovado', ajustar: 'Ajustar', descartado: 'Descartado', publicado: 'Publicado' };
+const STATUS: Record<MktStatus, string> = { proposta: 'Esperando você', aprovado: 'Roteiro aprovado', ajustar: 'Ajustar', descartado: 'Descartado', publicado: 'Publicado' };
+const ARTE: Record<MktArteStatus, string> = {
+  produzindo: 'Produzindo a arte. Aparece aqui quando ficar pronta.',
+  pronta: 'Arte pronta: confira e aprove.',
+  aprovada: 'Arte aprovada. Pode ir para publicação.',
+  ajustar: 'Refazendo a arte com o seu ajuste.',
+  falhou: 'A arte não saiu.',
+};
+
+type Etapa = 'roteiro' | 'arte';
+type Decisao = { id: string; status: MktDecisao | MktDecisaoArte; nota?: string };
 const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
 const num = (v?: number) => (typeof v === 'number' ? Math.round(v).toLocaleString('pt-BR') : '-');
@@ -43,8 +55,8 @@ async function buscar(): Promise<MktSnapshot | null> {
   return (await res.json()) as MktSnapshot;
 }
 
-async function enviarDecisao(semana: string, id: string, status: MktDecisao, nota?: string): Promise<void> {
-  const res = await fetch('/api/marketing/decidir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ semana, id, status, nota }) });
+async function enviarDecisao(semana: string, etapa: Etapa, d: Decisao): Promise<void> {
+  const res = await fetch('/api/marketing/decidir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ semana, etapa, ...d }) });
   if (!res.ok) {
     const j = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error ?? tr('erro {0}', [res.status]));
@@ -59,8 +71,10 @@ export class MarketingLauncher implements UiComponent {
   private readonly aviso: HTMLElement;
   private dados: MktSnapshot | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  /** Item com a caixa de ajuste aberta (sobrevive ao redesenho do poll). */
+  /** Caixa de ajuste aberta ("<id>" no roteiro, "arte:<id>" na arte); sobrevive ao redesenho do poll. */
   private ajustando: string | null = null;
+  /** Assinatura do último snapshot desenhado: sem mudança, não redesenha (não corta o vídeo da prévia). */
+  private desenhado = '';
   private ocupado = false;
 
   constructor(
@@ -89,6 +103,7 @@ export class MarketingLauncher implements UiComponent {
     this.el.addEventListener('close', () => {
       this.button.setAttribute('aria-expanded', 'false');
       this.ajustando = null;
+      this.desenhado = '';
       this.agendar();
     });
     mount(this.el);
@@ -122,8 +137,10 @@ export class MarketingLauncher implements UiComponent {
         if (n) this.button.dataset.mkt = 'pendente';
         else delete this.button.dataset.mkt;
         this.button.title = `${tr('Marketing')}${n ? ` · ${n} ${tr('esperando aprovação')}` : ''}`;
-        // Não redesenha com a caixa de ajuste aberta (apagaria o que está sendo digitado).
-        if (this.el.open && !this.ajustando) this.desenhar(this.dados);
+        // Não redesenha com a caixa de ajuste aberta (apagaria o que está sendo digitado), com vídeo tocando,
+        // nem quando nada mudou.
+        const tocando = [...this.el.querySelectorAll('video')].some((v) => !v.paused);
+        if (this.el.open && !this.ajustando && !tocando) this.desenhar(this.dados);
       }
     } catch {
       if (this.el.open) this.corpo.replaceChildren(h('p', { class: 'ui-infra__vazio', text: tr('Não foi possível ler a sala de Marketing agora. Tento de novo em instantes.') }));
@@ -137,13 +154,14 @@ export class MarketingLauncher implements UiComponent {
     this.aviso.textContent = texto ?? '';
   }
 
-  private async decidirItens(semana: string, itens: Array<{ id: string; status: MktDecisao; nota?: string }>): Promise<void> {
+  private async decidirItens(semana: string, itens: Decisao[], etapa: Etapa = 'roteiro'): Promise<void> {
     if (this.ocupado) return;
     this.ocupado = true;
     this.mostrarAviso(null);
     try {
-      for (const it of itens) await enviarDecisao(semana, it.id, it.status, it.nota);
+      for (const it of itens) await enviarDecisao(semana, etapa, it);
       this.ajustando = null;
+      this.desenhado = '';
     } catch (e) {
       this.mostrarAviso(`${tr('Não salvou')}: ${(e as Error).message}`);
     } finally {
@@ -152,7 +170,15 @@ export class MarketingLauncher implements UiComponent {
     }
   }
 
+  private redesenhar(): void {
+    this.desenhado = '';
+    if (this.dados) this.desenhar(this.dados);
+  }
+
   private desenhar(d: MktSnapshot): void {
+    const assinatura = JSON.stringify(d);
+    if (assinatura === this.desenhado) return;
+    this.desenhado = assinatura;
     this.sub.textContent = `${tr('Números do Instagram de')} ${horaCurta(d.metricas?.atualizadoEm)} · ${tr('nada é publicado sem a sua aprovação')}`;
     if (!d.configurado && !d.metricas) {
       this.corpo.replaceChildren(h('p', { class: 'ui-infra__vazio', text: tr('O coletor do Instagram ainda não rodou (npm run mkt:coletar no computador).') }));
@@ -198,14 +224,25 @@ export class MarketingLauncher implements UiComponent {
     }
     for (const p of pautas) {
       const propostas = p.itens.filter((i) => i.status === 'proposta');
+      const artes = p.itens.filter((i) => i.status === 'aprovado' && i.arte?.status === 'pronta');
       const cab = h('div', { class: 'ui-mkt__semana' }, h('h4', { text: `${tr('Semana de')} ${diaCurto(p.semana)}` }));
       if (propostas.length > 1) {
         cab.append(
           h('button', {
             class: 'ui-btn ui-btn--primary ui-btn--sm',
             type: 'button',
-            text: `${tr('Aprovar as')} ${propostas.length} ${tr('propostas')}`,
+            text: `${tr('Aprovar os')} ${propostas.length} ${tr('roteiros')}`,
             on: { click: () => void this.decidirItens(p.semana, propostas.map((i) => ({ id: i.id, status: 'aprovado' as const }))) },
+          }),
+        );
+      }
+      if (artes.length > 1) {
+        cab.append(
+          h('button', {
+            class: 'ui-btn ui-btn--primary ui-btn--sm',
+            type: 'button',
+            text: `${tr('Aprovar as')} ${artes.length} ${tr('artes')}`,
+            on: { click: () => void this.decidirItens(p.semana, artes.map((i) => ({ id: i.id, status: 'aprovada' as const })), 'arte') },
           }),
         );
       }
@@ -250,7 +287,7 @@ export class MarketingLauncher implements UiComponent {
           on: {
             click: () => {
               this.ajustando = it.id;
-              if (this.dados) this.desenhar(this.dados);
+              this.redesenhar();
             },
           },
         }),
@@ -258,6 +295,7 @@ export class MarketingLauncher implements UiComponent {
     if (it.status !== 'descartado') acoes.append(botao(tr('Descartar'), 'descartado'));
     if (it.status !== 'proposta') acoes.append(botao(tr('Voltar a proposta'), 'proposta'));
     li.append(acoes);
+    if (it.status === 'aprovado') li.append(this.arte(semana, it));
 
     if (this.ajustando === it.id) {
       const campo = h('textarea', { class: 'ui-mkt__campo', attrs: { rows: '3', maxlength: '1000', placeholder: tr('O que mudar? (ex.: trocar a capa, encurtar a legenda)'), 'aria-label': tr('O que ajustar') } });
@@ -275,7 +313,7 @@ export class MarketingLauncher implements UiComponent {
         on: {
           click: () => {
             this.ajustando = null;
-            if (this.dados) this.desenhar(this.dados);
+            this.redesenhar();
           },
         },
       });
@@ -283,6 +321,85 @@ export class MarketingLauncher implements UiComponent {
       queueMicrotask(() => campo.focus());
     }
     return li;
+  }
+
+  /** Segunda etapa: estado da arte, prévia dos arquivos e a decisão do dono. */
+  private arte(semana: string, it: MktPautaItem): HTMLElement {
+    const a = it.arte;
+    const box = h('div', { class: `ui-mkt__arte is-${a?.status ?? 'fila'}` }, h('h5', { text: tr('Arte') }));
+    if (!a) {
+      box.append(h('p', { class: 'ui-mkt__arte-st', text: tr('Na fila: a produção começa sozinha em instantes.') }));
+      return box;
+    }
+    box.append(h('p', { class: 'ui-mkt__arte-st', text: tr(ARTE[a.status] ?? a.status) }));
+    if (a.status === 'falhou' && a.erro) box.append(h('p', { class: 'ui-mkt__erro', text: a.erro }));
+    if (a.nota) box.append(h('p', { class: 'ui-mkt__nota', text: `${tr('Seu ajuste na arte')}: ${a.nota}` }));
+    if (a.arquivos.length && a.status !== 'produzindo') box.append(this.previa(semana, it.id, a));
+
+    const acoes = h('div', { class: 'ui-mkt__acoes' });
+    const botao = (texto: string, status: MktDecisaoArte, primario = false) =>
+      h('button', { class: `ui-btn ui-btn--sm${primario ? ' ui-btn--primary' : ''}`, type: 'button', text: texto, on: { click: () => void this.decidirItens(semana, [{ id: it.id, status }], 'arte') } });
+    const chave = `arte:${it.id}`;
+    const pedirAjuste = () =>
+      h('button', {
+        class: 'ui-btn ui-btn--sm',
+        type: 'button',
+        text: tr('Pedir ajuste na arte'),
+        on: {
+          click: () => {
+            this.ajustando = chave;
+            this.redesenhar();
+          },
+        },
+      });
+    if (a.status === 'pronta') acoes.append(botao(tr('Aprovar arte'), 'aprovada', true), pedirAjuste());
+    if (a.status === 'aprovada') acoes.append(pedirAjuste(), botao(tr('Voltar a conferir'), 'pronta'));
+    if (a.status === 'falhou') acoes.append(botao(tr('Tentar de novo'), 'ajustar', true));
+    if (acoes.childElementCount) box.append(acoes);
+
+    if (this.ajustando === chave) {
+      const campo = h('textarea', { class: 'ui-mkt__campo', attrs: { rows: '3', maxlength: '1000', placeholder: tr('O que mudar na arte? (ex.: logo maior, trocar a foto do slide 2)'), 'aria-label': tr('O que ajustar na arte') } });
+      const enviar = h('button', {
+        class: 'ui-btn ui-btn--primary ui-btn--sm',
+        type: 'button',
+        text: tr('Enviar ajuste'),
+        on: { click: () => void this.decidirItens(semana, [{ id: it.id, status: 'ajustar', nota: campo.value }], 'arte') },
+      });
+      const cancelar = h('button', {
+        class: 'ui-btn ui-btn--sm',
+        type: 'button',
+        text: tr('Cancelar'),
+        on: {
+          click: () => {
+            this.ajustando = null;
+            this.redesenhar();
+          },
+        },
+      });
+      box.append(h('div', { class: 'ui-mkt__ajuste' }, campo, h('div', { class: 'ui-mkt__acoes' }, enviar, cancelar)));
+      queueMicrotask(() => campo.focus());
+    }
+    return box;
+  }
+
+  /** Prévia: slides lado a lado (clique abre o tamanho real) e vídeo com controles. */
+  private previa(semana: string, id: string, a: MktArte): HTMLElement {
+    const faixa = h('div', { class: 'ui-mkt__previa' });
+    a.arquivos.forEach((nome, i) => {
+      const src = `/api/marketing/midia/${encodeURIComponent(semana)}/${encodeURIComponent(id)}/${encodeURIComponent(nome)}?v=${a.versao}`;
+      if (ehVideo(nome)) {
+        faixa.append(h('video', { class: 'ui-mkt__previa-video', attrs: { src, controls: '', preload: 'metadata', playsinline: '' } }));
+      } else {
+        faixa.append(
+          h(
+            'a',
+            { class: 'ui-mkt__previa-img', attrs: { href: src, target: '_blank', rel: 'noopener noreferrer', title: `${tr('Abrir')} ${i + 1}/${a.arquivos.length}` } },
+            h('img', { attrs: { src, alt: `${tr('Slide')} ${i + 1}`, loading: 'lazy' } }),
+          ),
+        );
+      }
+    });
+    return faixa;
   }
 
   /** Últimos posts por conta: barra fina do alcance (uma série só, sem legenda), números em texto ao lado. */

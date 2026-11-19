@@ -1,4 +1,5 @@
 // Rotas da API (/api/*). Respostas JSON; rotas desconhecidas -> 404 JSON.
+import { createReadStream } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { NAME_MAX, parseAppearanceParts, parseCharacterName, parseSeed } from '../../shared/appearance';
 import type { AccessInfo, AgentInfo, ModSummary, OfficeSnapshot, SourceInfo, UpdateStatus } from '../../shared/types';
@@ -81,10 +82,14 @@ export interface ApiDeps {
   stats?: DayStatsService;
   /** Sala de Infra (fork Vela): status das máquinas e dos sistemas, custo e alertas (GET /api/infra, só local). */
   infra?: () => unknown;
-  /** Sala de Marketing (fork Vela): métricas do Instagram e pauta semanal (GET /api/marketing, POST /api/marketing/decidir; só local). */
+  /**
+   * Sala de Marketing (fork Vela): métricas do Instagram, pauta semanal e prévia da arte
+   * (GET /api/marketing, POST /api/marketing/decidir, GET /api/marketing/midia/<semana>/<id>/<arquivo>; só local).
+   */
   marketing?: {
     snapshot(): unknown;
-    decidir(semana: string, id: string, status: string, nota?: string): unknown;
+    decidir(semana: string, id: string, status: string, nota?: string, etapa?: string): unknown;
+    midia(semana: string, id: string, nome: string): { caminho: string; tipo: string; tamanho: number } | null;
   };
   /** Verificação de versão nova no GitHub (GET /api/updates, POST /api/updates/check; updates/checker.ts). */
   updates?: {
@@ -187,6 +192,46 @@ function sendFile(res: ServerResponse, data: Buffer, type: string, name: string)
     ...(active ? { 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data: blob: 'self'; style-src 'unsafe-inline'; media-src 'self'" } : {}),
   });
   res.end(data);
+}
+
+/**
+ * Mídia da arte (imagem ou vídeo) direto do disco, com suporte a Range (o <video> pede pedaços para avançar).
+ * Sem cache longo: a arte refeita mantém o nome (a janela põe ?v=<versão> na URL).
+ */
+function sendMidia(req: IncomingMessage, res: ServerResponse, m: { caminho: string; tipo: string; tamanho: number }): void {
+  const base = {
+    'Content-Type': m.tipo,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, no-cache',
+    'X-Content-Type-Options': 'nosniff',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
+  let inicio = 0;
+  let fim = m.tamanho - 1;
+  if (range && (range[1] || range[2])) {
+    if (range[1]) {
+      inicio = Number(range[1]);
+      if (range[2]) fim = Math.min(Number(range[2]), m.tamanho - 1);
+    } else {
+      inicio = Math.max(0, m.tamanho - Number(range[2]));
+    }
+    if (inicio > fim || inicio >= m.tamanho) {
+      res.writeHead(416, { 'Content-Range': `bytes */${m.tamanho}` });
+      res.end();
+      return;
+    }
+    res.writeHead(206, { ...base, 'Content-Range': `bytes ${inicio}-${fim}/${m.tamanho}`, 'Content-Length': fim - inicio + 1 });
+  } else {
+    res.writeHead(200, { ...base, 'Content-Length': m.tamanho });
+  }
+  if (req.method === 'HEAD' || m.tamanho === 0) {
+    res.end();
+    return;
+  }
+  const stream = createReadStream(m.caminho, { start: inicio, end: fim });
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
 }
 
 /** Lê o corpo JSON. Exige `Content-Type: application/json` (barreira contra CSRF; ver http/guard.ts). */
@@ -713,16 +758,35 @@ export function createApiHandler(deps: ApiDeps): (req: IncomingMessage, res: Ser
       else
         readJson(req)
           .then((body) => {
-            const b = body as { semana?: unknown; id?: unknown; status?: unknown; nota?: unknown };
+            const b = body as { semana?: unknown; id?: unknown; status?: unknown; nota?: unknown; etapa?: unknown };
             if (typeof b?.semana !== 'string' || typeof b.id !== 'string' || typeof b.status !== 'string') throw new HttpError(400, tr('esperado {semana, id, status}'));
             try {
-              sendJson(res, 200, deps.marketing!.decidir(b.semana, b.id, b.status, typeof b.nota === 'string' ? b.nota : undefined));
+              const etapa = typeof b.etapa === 'string' ? b.etapa : 'roteiro';
+              sendJson(res, 200, deps.marketing!.decidir(b.semana, b.id, b.status, typeof b.nota === 'string' ? b.nota : undefined, etapa));
             } catch (e) {
               const msg = (e as Error).message;
               throw new HttpError(/não encontrad/.test(msg) ? 404 : 400, msg);
             }
           })
           .catch((err) => fail(res, err));
+      return true;
+    }
+    if (path.startsWith('/api/marketing/midia/')) {
+      // Prévia da arte: só no próprio computador. Nome validado no serviço (nada de barra, "..", extensão estranha).
+      if (method !== 'GET' && method !== 'HEAD') methodNotAllowed(res, 'GET');
+      else if (isRemote(req)) sendJson(res, 403, { error: tr('não liberado no acesso remoto') });
+      else if (!deps.marketing) sendJson(res, 404, { error: tr('sala de marketing desligada') });
+      else {
+        let partes: string[] = [];
+        try {
+          partes = path.slice('/api/marketing/midia/'.length).split('/').map(decodeURIComponent);
+        } catch {
+          partes = [];
+        }
+        const m = partes.length === 3 ? deps.marketing.midia(partes[0]!, partes[1]!, partes[2]!) : null;
+        if (!m) sendJson(res, 404, { error: tr('arquivo não encontrado') });
+        else sendMidia(req, res, m);
+      }
       return true;
     }
     if (path === '/api/demo') {

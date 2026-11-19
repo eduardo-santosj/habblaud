@@ -42,3 +42,34 @@ describe('MarketingService', () => {
     expect(() => svc.decidir('2026-11-23', 'a', 'publicado')).toThrow(/inválido/);
   });
 });
+
+describe('MarketingService: arte', () => {
+  const agora = Date.parse('2026-11-18T15:00:00Z');
+
+  it('decide a arte na etapa "arte" e recusa etapa desconhecida', () => {
+    const { svc, pauta } = montar();
+    svc.decidir('2026-11-23', 'a', 'aprovado');
+    const arq = join(pauta, '2026-11-23.json');
+    const p = JSON.parse(readFileSync(arq, 'utf8'));
+    p.itens[0].arte = { status: 'pronta', arquivos: ['01.png'], versao: 1 };
+    writeFileSync(arq, JSON.stringify(p));
+    expect(svc.snapshot(agora).pendentes).toBe(2); // 1 roteiro (b) + 1 arte pronta (a)
+    svc.decidir('2026-11-23', 'a', 'aprovada', undefined, 'arte');
+    expect(JSON.parse(readFileSync(arq, 'utf8')).itens[0].arte.status).toBe('aprovada');
+    expect(() => svc.decidir('2026-11-23', 'a', 'aprovada', undefined, 'xyz')).toThrow(/etapa inválida/);
+  });
+
+  it('entrega só arquivo de mídia existente, com nome simples', () => {
+    const { svc, usage } = montar();
+    const pasta = join(usage, 'marketing', 'midia', '2026-11-23', 'a');
+    mkdirSync(pasta, { recursive: true });
+    writeFileSync(join(pasta, '01.png'), 'png');
+    writeFileSync(join(pasta, 'roteiro.txt'), 'x');
+    expect(svc.midia('2026-11-23', 'a', '01.png')).toMatchObject({ tipo: 'image/png', tamanho: 3 });
+    expect(svc.midia('2026-11-23', 'a', '02.png')).toBeNull();
+    expect(svc.midia('2026-11-23', 'a', 'roteiro.txt')).toBeNull();
+    expect(svc.midia('..', 'a', '01.png')).toBeNull();
+    expect(svc.midia('2026-11-23', '../a', '01.png')).toBeNull();
+    expect(svc.midia('2026-11-23', 'a', '../a/01.png')).toBeNull();
+  });
+});
