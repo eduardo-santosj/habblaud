@@ -100,6 +100,29 @@ export interface MktContaMetricas {
   historico: MktPontoSeguidores[];
   posts: MktPost[];
   erro?: string;
+  /** Seguidores online por hora no fuso de São Paulo (índice 0 a 23), um vetor por dia medido (até 30). */
+  online?: { porDia: Record<string, number[]>; atualizadoEm: string };
+}
+
+export interface MktHorarios {
+  /** Média de seguidores online em cada hora de SP. */
+  media: number[];
+  dias: number;
+  /** Até 3 horas com mais gente online (das 7h às 23h), da melhor para a pior. */
+  melhores: number[];
+  /** A melhor hora tem pelo menos 10% a mais que a média do horário útil? Senão, a curva é plana. */
+  destaca: boolean;
+}
+
+/** Melhores horas para postar a partir dos seguidores online (média dos dias medidos). */
+export function melhoresHorarios(online?: MktContaMetricas['online']): MktHorarios | undefined {
+  const dias = Object.values(online?.porDia ?? {}).filter((d) => Array.isArray(d) && d.length === 24);
+  if (!dias.length) return undefined;
+  const media = Array.from({ length: 24 }, (_, h) => dias.reduce((s, d) => s + (d[h] ?? 0), 0) / dias.length);
+  const uteis = media.map((n, h) => [h, n] as const).filter(([h]) => h >= 7 && h <= 23);
+  const ordem = [...uteis].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  const mediaUtil = uteis.reduce((s, [, n]) => s + n, 0) / uteis.length;
+  return { media, dias: dias.length, melhores: ordem.slice(0, 3).map(([h]) => h), destaca: mediaUtil > 0 && ordem[0]![1] >= mediaUtil * 1.1 };
 }
 
 export interface MktMetricasFile {
@@ -144,6 +167,8 @@ export interface MktResumoConta {
   alcanceMedio?: number;
   engajamentoMedio?: number;
   melhorPost?: MktPost;
+  /** Melhores horas para postar (seguidores online). */
+  horarios?: MktHorarios;
 }
 
 export interface MktAlerta {
@@ -219,7 +244,7 @@ export function resumirConta(c: MktContaMetricas, ultimos = 10): MktResumoConta 
   const alcances = recentes.map((p) => p.alcance).filter((v): v is number => typeof v === 'number');
   const engs = recentes.map(engajamento).filter((v): v is number => typeof v === 'number');
   const melhorPost = recentes.reduce<MktPost | undefined>((m, p) => (!m || interacoesDo(p) > interacoesDo(m) ? p : m), undefined);
-  return { ganho7d: ganhoEm(c.historico), alcanceMedio: media(alcances), engajamentoMedio: media(engs), melhorPost };
+  return { ganho7d: ganhoEm(c.historico), alcanceMedio: media(alcances), engajamentoMedio: media(engs), melhorPost, horarios: melhoresHorarios(c.online) };
 }
 
 /** Aplica a decisão do dono num item da pauta. Item publicado não muda mais. Lança Error com o motivo. */

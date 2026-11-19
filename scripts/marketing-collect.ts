@@ -106,6 +106,30 @@ async function insightsDo(token: string, id: string): Promise<Partial<MktPost>> 
   return {};
 }
 
+type Online = { data?: Array<{ values?: Array<{ value?: Record<string, number>; end_time?: string }> }> };
+
+/**
+ * Seguidores online por hora (métrica online_followers). A Meta devolve um dia por vez, com as horas no fuso dela;
+ * o end_time (meia-noite desse fuso, em UTC) diz o deslocamento. Junta os dias novos aos já medidos (chave =
+ * end_time, até 30 dias), cada um com 24 posições no fuso de São Paulo (índice = hora de SP).
+ */
+export function juntarOnline(r: Online, antes: Record<string, number[]> = {}, max = 30): Record<string, number[]> {
+  const dias: Record<string, number[]> = { ...antes };
+  for (const v of r.data?.[0]?.values ?? []) {
+    if (!v.end_time || !v.value || Object.keys(v.value).length < 24) continue;
+    const fimUtc = new Date(v.end_time).getUTCHours();
+    const porHora = new Array<number>(24).fill(0);
+    for (const [k, n] of Object.entries(v.value)) {
+      const h = Number(k);
+      // end_time às 08:00 UTC = meia-noite em UTC-8: hora local h vira h + 8 em UTC, h + 8 - 3 em São Paulo.
+      if (Number.isInteger(h) && h >= 0 && h <= 23 && typeof n === 'number') porHora[(((h + fimUtc - 3) % 24) + 24) % 24] = n;
+    }
+    dias[v.end_time] = porHora;
+  }
+  const chaves = Object.keys(dias).sort().slice(-max);
+  return Object.fromEntries(chaves.map((k) => [k, dias[k]!]));
+}
+
 async function coletarConta(token: string, c: MktConfig['contas'][number], anterior?: MktContaMetricas): Promise<MktContaMetricas> {
   const base: MktContaMetricas = { id: c.id, nome: c.nome, historico: anterior?.historico ?? [], posts: anterior?.posts ?? [] };
   try {
@@ -126,6 +150,16 @@ async function coletarConta(token: string, c: MktConfig['contas'][number], anter
       comentarios: m.comments_count ?? 0,
       ...(await insightsDo(token, m.id)),
     }));
+    let online: MktContaMetricas['online'];
+    try {
+      const r = await graph<Online>(token, `${c.igUserId}/insights`, { metric: 'online_followers', period: 'lifetime' });
+      if (process.argv.includes('--sonda-horarios'))
+        console.log(`[mkt] ${c.nome} online_followers: ${JSON.stringify((r.data?.[0]?.values ?? []).map((v) => ({ fim: v.end_time, horas: Object.keys(v.value ?? {}).length })))}`);
+      const porDia = juntarOnline(r, anterior?.online?.porDia);
+      online = Object.keys(porDia).length ? { porDia, atualizadoEm: new Date().toISOString() } : anterior?.online;
+    } catch {
+      online = anterior?.online; // sem a métrica, fica a última boa
+    }
     const seguidores = perfil.followers_count ?? 0;
     return {
       ...base,
@@ -134,6 +168,7 @@ async function coletarConta(token: string, c: MktConfig['contas'][number], anter
       totalPosts: perfil.media_count,
       historico: registrarSeguidores(base.historico, diaSP(), seguidores),
       posts,
+      ...(online ? { online } : {}),
     };
   } catch (e) {
     // Mantém os números da última coleta boa e mostra o erro na janela.

@@ -5,7 +5,7 @@
 // (GET /api/marketing/midia/...) para o dono aprovar ou pedir ajuste.
 // O botão da barra mostra um ponto quando há post esperando aprovação. Sem a rota (modo por projeto, acesso
 // remoto), o botão nem aparece.
-import type { MktArte, MktArteStatus, MktContaMetricas, MktDecisao, MktDecisaoArte, MktFormato, MktPautaFile, MktPautaItem, MktPost, MktSnapshot, MktStatus } from '../../../shared/marketing';
+import type { MktArte, MktArteStatus, MktContaMetricas, MktResumoConta, MktDecisao, MktDecisaoArte, MktFormato, MktPautaFile, MktPautaItem, MktPost, MktSnapshot, MktStatus } from '../../../shared/marketing';
 import { ehVideo, engajamento, interacoesDo, momentoDoPost } from '../../../shared/marketing';
 import type { UiComponent, UiContext } from './context';
 import { h, iconButton } from './dom';
@@ -47,6 +47,18 @@ const diaSemana = (dia: string) => `${DIAS[new Date(`${dia}T12:00:00Z`).getUTCDa
 const horaCurta = (iso?: string) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 const dataPost = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' });
+
+/** Melhores horas de postar, em texto curto (curva plana vira "sem hora de destaque, bom das X às Y"). */
+function horariosTexto(hz?: MktResumoConta['horarios']): string {
+  if (!hz) return tr('Melhor horário: a Meta só mede a partir de 100 seguidores.');
+  const base = `${tr('Seguidores online')} (${hz.dias} ${hz.dias === 1 ? tr('dia') : tr('dias')})`;
+  if (!hz.destaca) {
+    const pico = Math.max(...hz.media);
+    const fortes = hz.media.map((n, h) => [h, n] as const).filter(([h, n]) => h >= 7 && n >= pico * 0.9).map(([h]) => h);
+    return `${base}: ${tr('sem hora de destaque, bom das')} ${Math.min(...fortes)}h ${tr('às')} ${Math.max(...fortes)}h`;
+  }
+  return `${base}: ${tr('melhores')} ${hz.melhores.map((h) => `${h}h`).join(', ')}`;
+}
 
 async function buscar(): Promise<MktSnapshot | null> {
   const res = await fetch('/api/marketing', { cache: 'no-store' });
@@ -204,6 +216,7 @@ export class MarketingLauncher implements UiComponent {
           h('strong', { text: `${num(c.seguidores)} ${tr('seguidores')}` }),
           h('span', { class: 'ui-infra__tile-s', text: ganho }),
           h('span', { class: 'ui-infra__tile-s', text: `${tr('Últimos 10 posts')}: ${tr('alcance médio')} ${num(r.alcanceMedio)} · ${tr('engajamento')} ${pct(r.engajamentoMedio)}` }),
+          h('span', { class: 'ui-infra__tile-s', text: horariosTexto(r.horarios) }),
           ...(c.erro ? [h('span', { class: 'ui-mkt__erro', text: c.erro })] : []),
         ),
       );

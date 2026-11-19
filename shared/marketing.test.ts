@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contarPendentes, decidir, decidirArte, marcarPostado, momentoDoPost, diaSP, engajamento, ganhoEm, gerarAlertasMkt, precisaProduzir, registrarSeguidores, resumirConta, segundaDe, tipoDaMidia, type MktPautaFile, type MktPautaItem, type MktPost } from './marketing';
+import { contarPendentes, melhoresHorarios, decidir, decidirArte, marcarPostado, momentoDoPost, diaSP, engajamento, ganhoEm, gerarAlertasMkt, precisaProduzir, registrarSeguidores, resumirConta, segundaDe, tipoDaMidia, type MktPautaFile, type MktPautaItem, type MktPost } from './marketing';
 
 const post = (p: Partial<MktPost>): MktPost => ({ id: 'p', tipo: 'IMAGE', data: '2026-11-10T12:00:00+0000', legenda: '', curtidas: 0, comentarios: 0, ...p });
 
@@ -178,5 +178,18 @@ describe('lembretes de postagem nos alertas', () => {
     expect(textos(aprovada, '2026-11-25T16:00:00Z')).toMatch(/Passou da hora/);
     expect(textos(aprovada, '2026-11-24T11:00:00Z')).not.toMatch(/Hoje|Passou/);
     expect(textos({ ...aprovada, status: 'pronta' }, '2026-11-24T20:00:00Z')).toMatch(/menos de 24 h/);
+  });
+});
+
+describe('melhores horários', () => {
+  it('média dos dias, top 3 no horário útil e curva plana sem destaque', () => {
+    const pico = Array.from({ length: 24 }, (_, h) => (h === 19 ? 100 : h === 12 ? 90 : 40));
+    const hz = melhoresHorarios({ porDia: { a: pico, b: pico }, atualizadoEm: 'x' })!;
+    expect(hz.dias).toBe(2);
+    expect(hz.melhores.slice(0, 2)).toEqual([19, 12]);
+    expect(hz.destaca).toBe(true);
+    const plano = melhoresHorarios({ porDia: { a: new Array(24).fill(50) }, atualizadoEm: 'x' })!;
+    expect(plano.destaca).toBe(false);
+    expect(melhoresHorarios(undefined)).toBeUndefined();
   });
 });
