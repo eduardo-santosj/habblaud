@@ -60,6 +60,31 @@ function horariosTexto(hz?: MktResumoConta['horarios']): string {
   return `${base}: ${tr('melhores')} ${hz.melhores.map((h) => `${h}h`).join(', ')}`;
 }
 
+/** Horas boas da conta: as 3 melhores, ou o intervalo com 90% do pico quando a curva é plana. */
+function horasBoas(hz: NonNullable<MktResumoConta['horarios']>): { texto: string; contem: (h: number) => boolean } {
+  if (hz.destaca) return { texto: hz.melhores.map((h) => `${h}h`).join(', '), contem: (h) => hz.melhores.includes(h) };
+  const pico = Math.max(...hz.media);
+  const fortes = hz.media.map((n, h) => [h, n] as const).filter(([h, n]) => h >= 7 && n >= pico * 0.9).map(([h]) => h);
+  const de = Math.min(...fortes);
+  const ate = Math.max(...fortes);
+  return { texto: `${de}h ${tr('às')} ${ate}h`, contem: (h) => h >= de && h <= ate };
+}
+
+/** Selo ao lado do horário do post: o melhor horário da conta, em destaque quando o post está fora dele. */
+function melhorChip(it: MktPautaItem, hz?: MktResumoConta['horarios']): HTMLElement[] {
+  if (!hz || it.status === 'publicado' || it.status === 'descartado') return [];
+  const boas = horasBoas(hz);
+  const hora = Number(/^(\d{1,2})/.exec(it.hora ?? '')?.[1] ?? NaN);
+  const fora = Number.isFinite(hora) && !boas.contem(hora);
+  return [
+    h('span', {
+      class: `ui-mkt__chip ui-mkt__melhor${fora ? ' is-fora' : ''}`,
+      text: `${tr('Melhor')}: ${boas.texto}`,
+      title: `${tr('Seguidores online da conta')} (${hz.dias} ${hz.dias === 1 ? tr('dia medido') : tr('dias medidos')})${fora ? ` · ${tr('este post está fora do melhor horário')}` : ''}`,
+    }),
+  ];
+}
+
 async function buscar(): Promise<MktSnapshot | null> {
   const res = await fetch('/api/marketing', { cache: 'no-store' });
   if (!res || res.status === 404 || res.status === 403) return null;
@@ -200,7 +225,7 @@ export class MarketingLauncher implements UiComponent {
     }
     const contas = d.metricas?.contas ?? [];
     const nomes = new Map(contas.map((c) => [c.id, c.nome]));
-    this.corpo.replaceChildren(this.contas(d, contas), ...(d.alertas.length ? [this.alertas(d)] : []), this.pautas(d.pautas, nomes), this.posts(contas));
+    this.corpo.replaceChildren(this.contas(d, contas), ...(d.alertas.length ? [this.alertas(d)] : []), this.pautas(d.pautas, nomes, d.resumo), this.posts(contas));
   }
 
   private contas(d: MktSnapshot, contas: MktContaMetricas[]): HTMLElement {
@@ -231,7 +256,7 @@ export class MarketingLauncher implements UiComponent {
     return h('section', { class: 'ui-infra__sec' }, h('h3', { text: tr('Alertas') }), ul);
   }
 
-  private pautas(pautas: MktPautaFile[], nomes: Map<string, string>): HTMLElement {
+  private pautas(pautas: MktPautaFile[], nomes: Map<string, string>, resumo: MktSnapshot['resumo']): HTMLElement {
     const sec = h('section', { class: 'ui-infra__sec' }, h('h3', { text: tr('Pauta') }));
     if (!pautas.length) {
       sec.append(h('p', { class: 'ui-infra__vazio', text: tr('Nenhuma pauta montada para esta semana ou a próxima.') }));
@@ -262,19 +287,20 @@ export class MarketingLauncher implements UiComponent {
         );
       }
       const lista = h('ol', { class: 'ui-mkt__itens' });
-      for (const it of [...p.itens].sort((a, b) => `${a.dia}${a.hora ?? ''}`.localeCompare(`${b.dia}${b.hora ?? ''}`))) lista.append(this.item(p.semana, it, nomes));
+      for (const it of [...p.itens].sort((a, b) => `${a.dia}${a.hora ?? ''}`.localeCompare(`${b.dia}${b.hora ?? ''}`))) lista.append(this.item(p.semana, it, nomes, resumo[it.conta]?.horarios));
       sec.append(cab, lista);
     }
     return sec;
   }
 
-  private item(semana: string, it: MktPautaItem, nomes: Map<string, string>): HTMLElement {
+  private item(semana: string, it: MktPautaItem, nomes: Map<string, string>, horarios?: MktResumoConta['horarios']): HTMLElement {
     const li = h('li', { class: `ui-mkt__item is-${it.status}` });
     li.append(
       h(
         'div',
         { class: 'ui-mkt__item-cab' },
         h('span', { class: 'ui-mkt__quando', text: `${diaSemana(it.dia)}${it.hora ? ` · ${it.hora}` : ''}` }),
+        ...melhorChip(it, horarios),
         h('span', { class: 'ui-mkt__chip', text: nomes.get(it.conta) ?? it.conta }),
         h('span', { class: 'ui-mkt__chip', text: FORMATO[it.formato] ?? it.formato }),
         h('span', { class: `ui-mkt__status is-${it.status}`, text: STATUS[it.status] ?? it.status }),

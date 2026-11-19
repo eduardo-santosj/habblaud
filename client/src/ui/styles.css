@@ -11281,3 +11281,5 @@ a.ui-mkt__post-nome:hover { text-decoration: underline; }
 .ui-mkt__postar h5 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ui-muted); }
 .ui-mkt__baixar { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
 .ui-mkt__baixar-link { color: var(--ui-text); text-decoration: underline; }
+.ui-mkt__melhor { color: var(--ui-muted); }
+.ui-mkt__melhor.is-fora { color: #fab219; border-color: #fab219; }
